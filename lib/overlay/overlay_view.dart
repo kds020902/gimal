@@ -51,7 +51,7 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
   OverlayMode? _activeMode;
   OverlayPosition? _launcherPosition;
   int? _memoEditIndex;
-  bool _expanded = false;
+  bool _expanded = true;
   bool _webOpen = false;
   bool _isDark = false;
   bool _isClosing = false;
@@ -125,26 +125,34 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
       _launcherPosition = null;
     }
 
+    final expanded = await _alignFullScreenOverlay();
+    if (_isClosing || !mounted || !expanded) return;
+
     setState(() {
       _expanded = true;
       _activeMode = null;
     });
-
-    try {
-      await _alignFullScreenOverlay();
-    } catch (error) {
-      debugPrint('alignFullScreenOverlay failed: $error');
-    }
   }
 
   // 오버레이 창 자체를 화면 전체 크기로 맞춘다.
-  Future<void> _alignFullScreenOverlay() async {
-    await FlutterOverlayWindow.resizeOverlay(
-      WindowSize.matchParent,
-      WindowSize.matchParent,
-      false,
-    );
-    await FlutterOverlayWindow.moveOverlay(OverlayPosition(0, 0));
+  Future<bool> _alignFullScreenOverlay() async {
+    try {
+      await FlutterOverlayWindow.moveOverlay(OverlayPosition(0, 0));
+      final resized = await FlutterOverlayWindow.resizeOverlay(
+        WindowSize.matchParent,
+        WindowSize.fullCover,
+        false,
+      );
+      await FlutterOverlayWindow.moveOverlay(OverlayPosition(0, 0));
+
+      // 실제 휴대폰에서는 창 크기 변경 직후 Flutter 화면 크기가 한 박자 늦게 들어올 수 있다.
+      await Future<void>.delayed(const Duration(milliseconds: 60));
+      return resized != false;
+    } catch (error) {
+      debugPrint('alignFullScreenOverlay failed: $error');
+      await _restoreLauncherWindow();
+      return false;
+    }
   }
 
   // "앱으로" 버튼을 눌렀을 때 웹뷰를 닫고 메인 앱을 앞으로 가져온 뒤 오버레이를 종료한다.
@@ -187,6 +195,11 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
     await WidgetsBinding.instance.endOfFrame;
     if (!mounted) return;
 
+    await _restoreLauncherWindow();
+  }
+
+  // 전체 화면 전환에 실패하거나 닫기 버튼을 눌렀을 때 다시 작은 아이콘 창으로 되돌린다.
+  Future<void> _restoreLauncherWindow() async {
     await FlutterOverlayWindow.resizeOverlay(
       _launcherSize,
       _launcherSize,

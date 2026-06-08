@@ -25,9 +25,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     'com.example.gimal/home',
   );
 
-  // 오버레이를 처음 띄울 때 보이는 작은 아이콘의 크기이다.
-  static const int _launcherSize = 72;
-
   StreamSubscription<dynamic>? _overlaySubscription;
 
   @override
@@ -70,17 +67,17 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     globalMemos = memos;
   }
 
-  // 오버레이 권한을 확인한 뒤 작은 오버레이 아이콘을 띄우고 홈 화면으로 이동한다.
+  // 오버레이 권한을 확인한 뒤 전체 오버레이 화면을 띄우고 홈 화면으로 이동한다.
   Future<void> _startOverlay() async {
     if (!await _checkOverlayPermission()) return;
 
     await FlutterOverlayWindow.showOverlay(
-      enableDrag: true,
+      enableDrag: false,
       overlayTitle: 'gimal',
       overlayContent: 'Quick overlay menu',
       flag: OverlayFlag.focusPointer,
-      width: _launcherSize,
-      height: _launcherSize,
+      width: WindowSize.matchParent,
+      height: WindowSize.fullCover,
     );
 
     try {
