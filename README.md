@@ -7,7 +7,7 @@ Flutter로 만든 오버레이 기반 컨트롤러 앱입니다.
 
 ## 화면 예시
 
-![오버레이 아이콘 실행 화면](docs/screenshots/overlay_launcher.png)
+![앱 메인 메뉴 화면](docs/screenshots/overlay_launcher.png)
 
 ## 주요 기능
 
