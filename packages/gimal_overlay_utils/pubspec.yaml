@@ -1,0 +1,19 @@
+name: gimal_overlay_utils
+description: Android helper for the gimal overlay window.
+version: 0.0.1
+publish_to: 'none'
+
+environment:
+  sdk: ^3.12.0
+  flutter: ">=3.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+flutter:
+  plugin:
+    platforms:
+      android:
+        package: com.example.gimal.overlayutils
+        pluginClass: OverlayUtilsPlugin

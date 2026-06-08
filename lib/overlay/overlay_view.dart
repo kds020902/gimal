@@ -1,0 +1,1127 @@
+import 'dart:async';
+
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_overlay_window/flutter_overlay_window.dart';
+import 'package:gimal/services/app_state_store.dart';
+
+// 실제 오버레이 화면을 구성하는 파일이다.
+// 작은 플로팅 아이콘, 상단 버튼 바, URL/북마크/메모/메뉴 패널과 오버레이 WebView를 제어한다.
+
+// 상단 버튼에서 어떤 패널을 열지 구분하기 위한 값이다.
+enum OverlayMode { url, bookmarks, memos, menu }
+
+// 오버레이 전용 Flutter 앱이다. 메인 앱과 별도로 overlayMain에서 실행된다.
+class OverlayApp extends StatelessWidget {
+  const OverlayApp({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return const MaterialApp(
+      debugShowCheckedModeBanner: false,
+      home: Material(color: Colors.transparent, child: OverlayView()),
+    );
+  }
+}
+
+class OverlayView extends StatefulWidget {
+  const OverlayView({super.key});
+
+  @override
+  State<OverlayView> createState() => _OverlayViewState();
+}
+
+class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
+  // Android 네이티브 코드와 통신해서 웹뷰 오버레이, 앱 복귀 같은 기능을 실행한다.
+  static const MethodChannel _utilsChannel = MethodChannel(
+    'com.example.gimal/utils',
+  );
+
+  // 접혀 있을 때 보이는 플로팅 아이콘 크기이다.
+  static const int _launcherSize = 72;
+  static const double _launcherIconSize = 64;
+
+  // URL 검색창과 메모 입력창에서 사용하는 컨트롤러이다.
+  final TextEditingController _searchController = TextEditingController();
+  final TextEditingController _memoTitleController = TextEditingController();
+  final TextEditingController _memoContentController = TextEditingController();
+  StreamSubscription<dynamic>? _overlaySubscription;
+
+  // 오버레이 화면의 현재 상태를 기억하는 값들이다.
+  OverlayMode? _activeMode;
+  OverlayPosition? _launcherPosition;
+  int? _memoEditIndex;
+  bool _expanded = false;
+  bool _webOpen = false;
+  bool _isDark = false;
+  bool _isClosing = false;
+  bool _memoEditorOpen = false;
+  List<Map<String, String>> _bookmarks = [];
+  List<Map<String, String>> _memos = [];
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+
+    // 메인 앱이나 다른 화면에서 데이터가 바뀌면 오버레이도 새 데이터를 다시 읽는다.
+    _overlaySubscription = AppStateStore.stateEvents.listen((event) {
+      if (_isClosing) return;
+      if (event == AppStateStore.stateUpdatedEvent) {
+        _loadState();
+      }
+    });
+
+    _loadState();
+  }
+
+  @override
+  void dispose() {
+    _isClosing = true;
+    WidgetsBinding.instance.removeObserver(this);
+    _overlaySubscription?.cancel();
+    _searchController.dispose();
+    _memoTitleController.dispose();
+    _memoContentController.dispose();
+    super.dispose();
+  }
+
+  @override
+  void didChangeMetrics() {
+    // 화면 회전처럼 크기가 바뀌면 웹뷰 오버레이 위치만 다시 맞춘다.
+    if (_isClosing || !_expanded) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (_isClosing || !mounted || !_expanded) return;
+      await _updateWebOverlayBounds();
+    });
+  }
+
+  // 저장소에서 북마크, 메모, 다크모드 값을 읽어 오버레이 상태에 반영한다.
+  Future<void> _loadState() async {
+    if (_isClosing) return;
+
+    final bookmarks = await AppStateStore.loadBookmarks();
+    final memos = await AppStateStore.loadMemos();
+    final isDark = await AppStateStore.loadDarkMode();
+
+    if (_isClosing || !mounted) return;
+    setState(() {
+      _bookmarks = bookmarks;
+      _memos = memos;
+      _isDark = isDark;
+    });
+  }
+
+  // 작은 플로팅 아이콘을 눌렀을 때 전체 오버레이 메뉴를 여는 함수이다.
+  Future<void> _openOverlayUi() async {
+    if (_isClosing) return;
+
+    await _loadState();
+    if (_isClosing || !mounted) return;
+
+    try {
+      _launcherPosition = await FlutterOverlayWindow.getOverlayPosition();
+    } catch (_) {
+      _launcherPosition = null;
+    }
+
+    await _alignFullScreenOverlay();
+    if (_isClosing || !mounted) return;
+
+    setState(() {
+      _expanded = true;
+      _activeMode = null;
+    });
+  }
+
+  // 오버레이 창 자체를 화면 전체 크기로 맞춘다.
+  Future<void> _alignFullScreenOverlay() async {
+    await FlutterOverlayWindow.moveOverlay(OverlayPosition(0, 0));
+    await FlutterOverlayWindow.resizeOverlay(
+      WindowSize.matchParent,
+      WindowSize.matchParent,
+      false,
+    );
+    await FlutterOverlayWindow.moveOverlay(OverlayPosition(0, 0));
+  }
+
+  // "앱으로" 버튼을 눌렀을 때 웹뷰를 닫고 메인 앱을 앞으로 가져온 뒤 오버레이를 종료한다.
+  Future<void> _returnToApp() async {
+    FocusManager.instance.primaryFocus?.unfocus();
+    _isClosing = true;
+    _webOpen = false;
+    _activeMode = null;
+
+    try {
+      await _closeNativeWeb();
+      try {
+        await _utilsChannel.invokeMethod('bringToFront');
+      } catch (error) {
+        debugPrint('bringToFront failed: $error');
+      }
+    } finally {
+      await WidgetsBinding.instance.endOfFrame;
+      try {
+        await FlutterOverlayWindow.closeOverlay();
+      } catch (error) {
+        _isClosing = false;
+        debugPrint('closeOverlay failed: $error');
+      }
+    }
+  }
+
+  // "닫기" 버튼을 눌렀을 때 큰 오버레이를 접고 다시 작은 아이콘만 보이게 한다.
+  Future<void> _collapseToLauncher() async {
+    FocusManager.instance.primaryFocus?.unfocus();
+    await _closeNativeWeb();
+    if (mounted) {
+      setState(() {
+        _expanded = false;
+        _webOpen = false;
+        _activeMode = null;
+      });
+    }
+
+    await WidgetsBinding.instance.endOfFrame;
+    if (!mounted) return;
+
+    await FlutterOverlayWindow.resizeOverlay(
+      _launcherSize,
+      _launcherSize,
+      true,
+    );
+    if (_launcherPosition != null) {
+      await FlutterOverlayWindow.moveOverlay(_launcherPosition!);
+    }
+  }
+
+  // 오버레이에서 다크모드를 바꾸고 저장소에 저장한다.
+  Future<void> _toggleDarkMode() async {
+    if (_isClosing) return;
+
+    final nextValue = !_isDark;
+    setState(() => _isDark = nextValue);
+    await AppStateStore.saveDarkMode(nextValue);
+  }
+
+  // 상단의 URL, 북마크, 메모, 메뉴 버튼을 눌렀을 때 열 패널을 정한다.
+  Future<void> _selectMode(OverlayMode mode) async {
+    if (_isClosing) return;
+
+    await _loadState();
+    if (_isClosing || !mounted) return;
+
+    final nextMode = _activeMode == mode ? null : mode;
+    setState(() {
+      _activeMode = nextMode;
+      if (nextMode != OverlayMode.memos) {
+        _memoEditorOpen = false;
+        _memoEditIndex = null;
+        _memoTitleController.clear();
+        _memoContentController.clear();
+      }
+    });
+    await _updateWebOverlayBounds();
+  }
+
+  // 검색어, URL, 북마크 주소를 Android WebView 오버레이로 연다.
+  Future<void> _openWeb(String value) async {
+    if (_isClosing) return;
+
+    final url = _makeWebUrl(value);
+    if (url.isEmpty) return;
+
+    try {
+      setState(() {
+        _webOpen = true;
+        _activeMode = null;
+        _memoEditorOpen = false;
+        _memoEditIndex = null;
+        _searchController.text = url;
+        _memoTitleController.clear();
+        _memoContentController.clear();
+      });
+
+      await _utilsChannel.invokeMethod('openWebOverlay', {
+        'url': url,
+        ..._webBounds(),
+      });
+    } on PlatformException catch (error) {
+      if (mounted) {
+        setState(() => _webOpen = false);
+      }
+      debugPrint('openWebOverlay failed: ${error.message}');
+    }
+  }
+
+  // Android WebView의 뒤로가기 기능을 실행한다.
+  Future<void> _goBackWeb() async {
+    if (_isClosing) return;
+    try {
+      await _utilsChannel.invokeMethod('webGoBack');
+    } catch (error) {
+      debugPrint('webGoBack failed: $error');
+    }
+  }
+
+  // 웹뷰 조작 바의 X 버튼을 눌렀을 때 웹뷰 오버레이만 닫는다.
+  Future<void> _closeWeb() async {
+    await _closeNativeWeb();
+    if (_isClosing || !mounted) return;
+    setState(() => _webOpen = false);
+  }
+
+  // Android 쪽에 만들어둔 WebView 창을 제거한다.
+  Future<void> _closeNativeWeb() async {
+    try {
+      await _utilsChannel.invokeMethod('closeWebOverlay');
+    } catch (error) {
+      debugPrint('closeWebOverlay failed: $error');
+    }
+  }
+
+  // 메모 추가 또는 수정 입력창을 오버레이 패널 안에 연다.
+  Future<void> _openMemoEditor({int? index}) async {
+    if (_webOpen) {
+      await _closeWeb();
+      if (!mounted) return;
+    }
+
+    if (index != null && (index < 0 || index >= _memos.length)) {
+      return;
+    }
+
+    final memo = index == null ? null : _memos[index];
+    setState(() {
+      _memoEditIndex = index;
+      _memoEditorOpen = true;
+      _memoTitleController.text = memo?['title'] ?? '';
+      _memoContentController.text = memo?['content'] ?? '';
+    });
+    await _updateWebOverlayBounds();
+  }
+
+  // 메모 입력창을 닫고 입력값과 수정 위치를 초기화한다.
+  void _closeMemoEditor() {
+    FocusManager.instance.primaryFocus?.unfocus();
+    setState(() {
+      _memoEditorOpen = false;
+      _memoEditIndex = null;
+      _memoTitleController.clear();
+      _memoContentController.clear();
+    });
+  }
+
+  // 메모 입력창의 내용을 새 메모로 추가하거나 기존 메모에 덮어쓴다.
+  Future<void> _saveMemoEditor() async {
+    final title = _memoTitleController.text.trim();
+    final content = _memoContentController.text.trim();
+    if (title.isEmpty && content.isEmpty) return;
+
+    final nextMemos = List<Map<String, String>>.from(_memos);
+    final savedMemo = {
+      'title': title.isEmpty ? '메모' : title,
+      'content': content,
+    };
+
+    final editIndex = _memoEditIndex;
+    if (editIndex == null) {
+      nextMemos.add(savedMemo);
+    } else if (editIndex >= 0 && editIndex < nextMemos.length) {
+      nextMemos[editIndex] = savedMemo;
+    } else {
+      _closeMemoEditor();
+      return;
+    }
+
+    _closeMemoEditor();
+    await _saveOverlayMemos(nextMemos);
+  }
+
+  // 수정 중이던 메모를 목록에서 삭제한다.
+  Future<void> _deleteMemoEditor() async {
+    final editIndex = _memoEditIndex;
+    if (editIndex == null) {
+      _closeMemoEditor();
+      return;
+    }
+    if (editIndex < 0 || editIndex >= _memos.length) {
+      _closeMemoEditor();
+      return;
+    }
+
+    final nextMemos = List<Map<String, String>>.from(_memos)
+      ..removeAt(editIndex);
+
+    _closeMemoEditor();
+    await _saveOverlayMemos(nextMemos);
+  }
+
+  // 오버레이 안의 메모 목록을 먼저 갱신하고, 저장소에도 같은 내용을 저장한다.
+  Future<void> _saveOverlayMemos(List<Map<String, String>> memos) async {
+    if (_isClosing || !mounted) return;
+    setState(() => _memos = memos);
+    await AppStateStore.saveMemos(memos);
+    if (_isClosing || !mounted) return;
+    await _updateWebOverlayBounds();
+  }
+
+  // 웹뷰가 열려 있을 때 상단 패널 높이에 맞춰 웹뷰 위치와 크기를 다시 계산한다.
+  Future<void> _updateWebOverlayBounds() async {
+    if (_isClosing || !_webOpen || !mounted) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (_isClosing || !_webOpen || !mounted) return;
+      try {
+        await _utilsChannel.invokeMethod('updateWebOverlayBounds', _webBounds());
+      } catch (error) {
+        debugPrint('updateWebOverlayBounds failed: $error');
+      }
+    });
+  }
+
+  // Android WebView 오버레이에 넘겨줄 x, y, width, height 값을 만든다.
+  Map<String, int> _webBounds() {
+    final media = MediaQuery.of(context);
+    final isLandscape = _isLandscapeScreen();
+    final sideMargin = isLandscape ? 10 : 12;
+    final top = _webTopOffset() + (isLandscape ? 8 : 10);
+    final height =
+        media.size.height -
+        top -
+        media.padding.bottom -
+        (isLandscape ? 16 : 72);
+
+    return {
+      'x': sideMargin,
+      'y': top.ceil(),
+      'width': (media.size.width - sideMargin * 2).ceil(),
+      'height': height.clamp(80, media.size.height).ceil(),
+    };
+  }
+
+  // 상단 버튼 바와 열린 패널 높이를 합쳐 웹뷰가 시작할 y 위치를 구한다.
+  int _webTopOffset() {
+    final media = MediaQuery.of(context);
+    final isLandscape = _isLandscapeScreen();
+    var height = media.padding.top + 8 + (isLandscape ? 54 : 58);
+
+    if (_webOpen) {
+      height += 1 + 58;
+    }
+
+    if (_activeMode != null) {
+      final panelPadding = isLandscape ? 16 : 20;
+      if (_activeMode == OverlayMode.bookmarks) {
+        height += 1 + panelPadding + (isLandscape ? 68 : 188);
+      } else if (_activeMode == OverlayMode.memos) {
+        height += 1 + panelPadding + _memoPanelHeight(isLandscape);
+      } else {
+        height += 1 + panelPadding + 42;
+      }
+    }
+
+    return height.ceil();
+  }
+
+  // 현재 화면이 가로 방향인지 세로 방향인지 판단한다.
+  bool _isLandscapeScreen() {
+    final size = MediaQuery.sizeOf(context);
+    return size.width > size.height;
+  }
+
+  // 메모 목록과 메모 편집창은 필요한 높이가 달라서 상태에 따라 높이를 바꾼다.
+  double _memoPanelHeight(bool compact) {
+    if (_memoEditorOpen) {
+      return compact ? 146 : 188;
+    }
+    return compact ? 82 : 188;
+  }
+
+  // URL 패널의 이동 버튼이나 키보드 제출이 눌렸을 때 웹을 연다.
+  Future<void> _searchUrl() async {
+    await _openWeb(_searchController.text);
+  }
+
+  // 입력값이 주소면 주소로, 일반 단어면 구글 검색 주소로 바꾼다.
+  String _makeWebUrl(String value) {
+    final trimmed = value.trim();
+    if (trimmed.isEmpty) return '';
+    if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+      return trimmed;
+    }
+    if (trimmed.contains('.') && !trimmed.contains(' ')) {
+      return 'https://$trimmed';
+    }
+    return 'https://www.google.com/search?q=${Uri.encodeQueryComponent(trimmed)}';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // 아이콘 화면과 펼친 화면을 둘 다 유지하고, Offstage로 보이기만 바꾼다.
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        Offstage(offstage: _expanded, child: Center(child: _buildLauncherIcon())),
+        Offstage(offstage: !_expanded, child: _buildExpandedOverlay()),
+      ],
+    );
+  }
+
+  // 펼쳐진 오버레이의 반투명 배경과 상단 패널을 만든다.
+  Widget _buildExpandedOverlay() {
+    final isLandscape = _isLandscapeScreen();
+    final scrimColor = _isDark
+        ? const Color(0xE6020617)
+        : const Color(0xE6F8FAFC);
+
+    return SizedBox.expand(
+      child: ColoredBox(
+        color: scrimColor,
+        child: SafeArea(
+          child: Align(
+            alignment: Alignment.topCenter,
+            child: Padding(
+              padding: EdgeInsets.fromLTRB(
+                isLandscape ? 10 : 8,
+                8,
+                isLandscape ? 10 : 8,
+                0,
+              ),
+              child: _buildTopOverlayPanel(isLandscape: isLandscape),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  // 접혀 있을 때 사용자가 누를 수 있는 동그란 플로팅 아이콘이다.
+  Widget _buildLauncherIcon() {
+    return GestureDetector(
+      onTap: _openOverlayUi,
+      child: Container(
+        width: _launcherIconSize,
+        height: _launcherIconSize,
+        decoration: BoxDecoration(
+          color: _accentColor,
+          shape: BoxShape.circle,
+          border: Border.all(color: Colors.white, width: 2),
+          boxShadow: const [
+            BoxShadow(
+              color: Color(0x66000000),
+              blurRadius: 16,
+              offset: Offset(0, 6),
+            ),
+          ],
+        ),
+        child: const Icon(Icons.layers, color: Colors.white, size: 28),
+      ),
+    );
+  }
+
+  // 상단 버튼 바, 웹뷰 조작 바, 선택된 기능 패널을 한 덩어리로 묶는다.
+  Widget _buildTopOverlayPanel({required bool isLandscape}) {
+    final textColor = _textColor;
+    final mutedColor = _mutedColor;
+
+    return Container(
+      width: double.infinity,
+      decoration: _panelDecoration,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _buildButtonBar(isLandscape: isLandscape),
+          if (_webOpen) ...[
+            Divider(height: 1, color: _borderColor),
+            _buildWebControlBar(),
+          ],
+          if (_activeMode != null) ...[
+            Divider(height: 1, color: _borderColor),
+            Padding(
+              padding: EdgeInsets.all(isLandscape ? 8 : 10),
+              child: _buildActivePanel(
+                textColor: textColor,
+                mutedColor: mutedColor,
+                isLandscape: isLandscape,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  // URL, 북마크, 메모, 메뉴 버튼이 있는 가장 위쪽 버튼 구역이다.
+  Widget _buildButtonBar({required bool isLandscape}) {
+    return Padding(
+      padding: EdgeInsets.all(isLandscape ? 6 : 8),
+      child: Row(
+        children: [
+          Expanded(
+            child: _barButton(
+              mode: OverlayMode.url,
+              icon: Icons.search,
+              label: 'URL',
+              onPressed: () => _selectMode(OverlayMode.url),
+            ),
+          ),
+          const SizedBox(width: 6),
+          Expanded(
+            child: _barButton(
+              mode: OverlayMode.bookmarks,
+              icon: Icons.bookmark_border,
+              label: '북마크',
+              onPressed: () => _selectMode(OverlayMode.bookmarks),
+            ),
+          ),
+          const SizedBox(width: 6),
+          Expanded(
+            child: _barButton(
+              mode: OverlayMode.memos,
+              icon: Icons.note_alt_outlined,
+              label: '메모',
+              onPressed: () => _selectMode(OverlayMode.memos),
+            ),
+          ),
+          const SizedBox(width: 6),
+          Expanded(child: _menuButton()),
+        ],
+      ),
+    );
+  }
+
+  // URL, 북마크, 메모처럼 선택 상태가 있는 버튼을 만드는 공통 함수이다.
+  Widget _barButton({
+    required OverlayMode mode,
+    required IconData icon,
+    required String label,
+    required VoidCallback onPressed,
+  }) {
+    final selected = _activeMode == mode;
+
+    return SizedBox(
+      height: 42,
+      child: FilledButton.icon(
+        style: FilledButton.styleFrom(
+          backgroundColor: selected ? _accentColor : _inactiveButtonColor,
+          foregroundColor: selected ? Colors.white : _accentColor,
+          padding: const EdgeInsets.symmetric(horizontal: 6),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+        ),
+        onPressed: onPressed,
+        icon: Icon(icon, size: 18),
+        label: Text(
+          label,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+        ),
+      ),
+    );
+  }
+
+  // 메뉴 버튼은 글자 대신 목록 아이콘만 보여주는 버튼이다.
+  Widget _menuButton() {
+    final selected = _activeMode == OverlayMode.menu;
+
+    return SizedBox(
+      height: 42,
+      child: FilledButton(
+        style: FilledButton.styleFrom(
+          backgroundColor: selected ? _accentColor : _inactiveButtonColor,
+          foregroundColor: selected ? Colors.white : _accentColor,
+          padding: const EdgeInsets.symmetric(horizontal: 6),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+        ),
+        onPressed: () => _selectMode(OverlayMode.menu),
+        child: const Icon(Icons.list, size: 20),
+      ),
+    );
+  }
+
+  // 현재 선택된 상단 버튼에 따라 URL, 북마크, 메모, 메뉴 패널 중 하나를 보여준다.
+  Widget _buildActivePanel({
+    required Color textColor,
+    required Color mutedColor,
+    required bool isLandscape,
+  }) {
+    if (_activeMode == OverlayMode.url) {
+      return _buildUrlPanel(textColor, mutedColor);
+    }
+    if (_activeMode == OverlayMode.bookmarks) {
+      return _buildBookmarkPanel(textColor, mutedColor, compact: isLandscape);
+    }
+    if (_activeMode == OverlayMode.memos) {
+      return _buildMemoPanel(compact: isLandscape);
+    }
+    if (_activeMode == OverlayMode.menu) {
+      return _buildMenuPanel();
+    }
+    return const SizedBox.shrink();
+  }
+
+  // 메뉴 패널에는 앱으로, 닫기, 다크모드 버튼을 배치한다.
+  Widget _buildMenuPanel() {
+    return Row(
+      children: [
+        Expanded(
+          child: _menuActionButton(
+            icon: Icons.home,
+            label: '앱으로',
+            onPressed: _returnToApp,
+          ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: _menuActionButton(
+            icon: Icons.keyboard_arrow_up,
+            label: '닫기',
+            onPressed: _collapseToLauncher,
+          ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: _menuActionButton(
+            icon: _isDark ? Icons.light_mode : Icons.dark_mode,
+            label: '다크모드',
+            onPressed: _toggleDarkMode,
+          ),
+        ),
+      ],
+    );
+  }
+
+  // 웹뷰가 열렸을 때 URL 입력, 이동, 뒤로가기, 닫기 버튼을 보여준다.
+  Widget _buildWebControlBar() {
+    return Padding(
+      padding: const EdgeInsets.all(8),
+      child: Row(
+        children: [
+          _smallTextButton('X', _closeWeb, danger: true, width: 44),
+          const SizedBox(width: 6),
+          Expanded(
+            child: SizedBox(
+              height: 42,
+              child: TextField(
+                controller: _searchController,
+                style: TextStyle(color: _textColor, fontSize: 14),
+                textInputAction: TextInputAction.go,
+                decoration: _fieldDecoration(
+                  'URL 또는 검색어',
+                  Icons.public,
+                  _mutedColor,
+                ),
+                onSubmitted: (_) => _searchUrl(),
+              ),
+            ),
+          ),
+          const SizedBox(width: 6),
+          _smallTextButton('이동', _searchUrl, width: 54),
+          const SizedBox(width: 6),
+          _smallTextButton('←', _goBackWeb, width: 44),
+        ],
+      ),
+    );
+  }
+
+  // 작은 텍스트 버튼을 반복해서 만들기 위한 공통 함수이다.
+  Widget _smallTextButton(
+    String label,
+    VoidCallback onPressed, {
+    bool danger = false,
+    double width = 52,
+  }) {
+    return SizedBox(
+      width: width,
+      height: 42,
+      child: FilledButton(
+        style: FilledButton.styleFrom(
+          backgroundColor: danger ? Colors.redAccent : _accentColor,
+          foregroundColor: Colors.white,
+          padding: EdgeInsets.zero,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+        ),
+        onPressed: onPressed,
+        child: Text(
+          label,
+          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
+        ),
+      ),
+    );
+  }
+
+  // 메뉴 패널의 아이콘+텍스트 버튼을 만드는 공통 함수이다.
+  Widget _menuActionButton({
+    required IconData icon,
+    required String label,
+    required VoidCallback onPressed,
+  }) {
+    return SizedBox(
+      height: 42,
+      child: FilledButton.icon(
+        style: FilledButton.styleFrom(
+          backgroundColor: _isDark
+              ? const Color(0xFF334155)
+              : const Color(0xFFE2E8F0),
+          foregroundColor: _textColor,
+          padding: const EdgeInsets.symmetric(horizontal: 6),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+        ),
+        onPressed: onPressed,
+        icon: Icon(icon, size: 18),
+        label: Text(
+          label,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+        ),
+      ),
+    );
+  }
+
+  // URL 또는 검색어를 입력하는 패널이다.
+  Widget _buildUrlPanel(Color textColor, Color mutedColor) {
+    return Row(
+      children: [
+        Expanded(
+          child: SizedBox(
+            height: 42,
+            child: TextField(
+              controller: _searchController,
+              style: TextStyle(color: textColor, fontSize: 14),
+              textInputAction: TextInputAction.search,
+              decoration: _fieldDecoration(
+                'URL 또는 검색어',
+                Icons.search,
+                mutedColor,
+              ),
+              onSubmitted: (_) => _searchUrl(),
+            ),
+          ),
+        ),
+        const SizedBox(width: 8),
+        _iconAction(Icons.arrow_forward, _searchUrl),
+      ],
+    );
+  }
+
+  // 저장된 북마크를 보여주고, 누르면 오버레이 WebView로 연다.
+  Widget _buildBookmarkPanel(
+    Color textColor,
+    Color mutedColor, {
+    required bool compact,
+  }) {
+    if (_bookmarks.isEmpty) {
+      return _buildHintLine('저장된 북마크가 없습니다.', mutedColor);
+    }
+
+    return SizedBox(
+      height: compact ? 68 : 188,
+      child: ListView.builder(
+        scrollDirection: compact ? Axis.horizontal : Axis.vertical,
+        itemCount: _bookmarks.length,
+        itemBuilder: (context, index) {
+          final item = _bookmarks[index];
+          final title = item['title']?.trim().isNotEmpty == true
+              ? item['title']!.trim()
+              : '북마크';
+          final url = item['url']?.trim().isNotEmpty == true
+              ? item['url']!.trim()
+              : title;
+
+          return SizedBox(
+            width: compact ? 240 : null,
+            child: Padding(
+              padding: EdgeInsets.only(
+                right: compact ? 8 : 0,
+                bottom: compact ? 0 : 8,
+              ),
+              child: Material(
+                color: _surfaceColor,
+                borderRadius: BorderRadius.circular(10),
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(10),
+                  onTap: () => _openWeb(url),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 8,
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(
+                          Icons.open_in_new,
+                          color: Colors.amber,
+                          size: 20,
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                title,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: textColor,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                              if (!compact)
+                                Text(
+                                  url,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(color: mutedColor),
+                                ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  // 메모 목록 또는 메모 편집창을 보여주는 패널이다.
+  Widget _buildMemoPanel({required bool compact}) {
+    if (_memoEditorOpen) {
+      return SizedBox(
+        height: _memoPanelHeight(compact),
+        child: _buildMemoEditor(),
+      );
+    }
+
+    return SizedBox(
+      height: _memoPanelHeight(compact),
+      child: ListView.builder(
+        scrollDirection: compact ? Axis.horizontal : Axis.vertical,
+        itemCount: _memos.length + 1,
+        itemBuilder: (context, index) {
+          if (index == 0) {
+            return _memoTile(
+              compact: compact,
+              icon: Icons.add,
+              title: '메모 추가',
+              content: _memos.isEmpty ? '저장된 메모가 없습니다.' : '새 메모 작성',
+              onTap: () => _openMemoEditor(),
+            );
+          }
+
+          final memoIndex = index - 1;
+          final memo = _memos[memoIndex];
+          final title = memo['title']?.isNotEmpty == true
+              ? memo['title']!
+              : '메모';
+          final content = memo['content']?.isNotEmpty == true
+              ? memo['content']!
+              : '메모 내용이 없습니다.';
+
+          return _memoTile(
+            compact: compact,
+            icon: Icons.note,
+            title: title,
+            content: content,
+            onTap: () => _openMemoEditor(index: memoIndex),
+          );
+        },
+      ),
+    );
+  }
+
+  // 메모 추가/수정 시 패널 안에 표시되는 입력창이다.
+  Widget _buildMemoEditor() {
+    return Material(
+      color: _surfaceColor,
+      borderRadius: BorderRadius.circular(10),
+      child: Padding(
+        padding: const EdgeInsets.all(8),
+        child: Column(
+          children: [
+            SizedBox(
+              height: 38,
+              child: TextField(
+                controller: _memoTitleController,
+                style: TextStyle(color: _textColor, fontSize: 14),
+                decoration: _fieldDecoration('제목', Icons.title, _mutedColor),
+              ),
+            ),
+            const SizedBox(height: 6),
+            Expanded(
+              child: TextField(
+                controller: _memoContentController,
+                style: TextStyle(color: _textColor, fontSize: 14),
+                maxLines: null,
+                expands: true,
+                textAlignVertical: TextAlignVertical.top,
+                decoration: _fieldDecoration(
+                  '내용',
+                  Icons.note_alt_outlined,
+                  _mutedColor,
+                ),
+              ),
+            ),
+            const SizedBox(height: 6),
+            Row(
+              children: [
+                if (_memoEditIndex != null) ...[
+                  _smallTextButton(
+                    '삭제',
+                    () => _deleteMemoEditor(),
+                    danger: true,
+                    width: 48,
+                  ),
+                  const SizedBox(width: 6),
+                ],
+                const Spacer(),
+                _smallTextButton('취소', _closeMemoEditor, width: 48),
+                const SizedBox(width: 6),
+                _smallTextButton('저장', () => _saveMemoEditor(), width: 48),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // 메모 목록에서 한 개의 메모를 카드처럼 보여주는 타일이다.
+  Widget _memoTile({
+    required bool compact,
+    required IconData icon,
+    required String title,
+    required String content,
+    required VoidCallback onTap,
+  }) {
+    return SizedBox(
+      width: compact ? 240 : null,
+      child: Padding(
+        padding: EdgeInsets.only(
+          right: compact ? 8 : 0,
+          bottom: compact ? 0 : 8,
+        ),
+        child: Material(
+          color: _surfaceColor,
+          borderRadius: BorderRadius.circular(10),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(10),
+            onTap: onTap,
+            child: Padding(
+              padding: const EdgeInsets.all(10),
+              child: Row(
+                children: [
+                  Icon(icon, color: _accentColor, size: 20),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: _textColor,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        Text(
+                          content,
+                          maxLines: compact ? 1 : 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(color: _mutedColor, fontSize: 12),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  // 아이콘만 들어가는 작은 실행 버튼을 만드는 공통 함수이다.
+  Widget _iconAction(IconData icon, VoidCallback onPressed) {
+    return SizedBox(
+      width: 42,
+      height: 42,
+      child: FilledButton(
+        style: FilledButton.styleFrom(
+          backgroundColor: _accentColor,
+          foregroundColor: Colors.white,
+          padding: EdgeInsets.zero,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+        ),
+        onPressed: onPressed,
+        child: Icon(icon, size: 19),
+      ),
+    );
+  }
+
+  // 목록이 비어 있을 때 보여주는 짧은 안내 문구이다.
+  Widget _buildHintLine(String message, Color mutedColor) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
+      child: Align(
+        alignment: Alignment.centerLeft,
+        child: Text(message, style: TextStyle(color: mutedColor)),
+      ),
+    );
+  }
+
+  // 오버레이 안의 TextField들이 같은 모양을 가지도록 만든 입력창 장식이다.
+  InputDecoration _fieldDecoration(
+    String hint,
+    IconData icon,
+    Color mutedColor,
+  ) {
+    return InputDecoration(
+      hintText: hint,
+      hintStyle: TextStyle(color: mutedColor),
+      prefixIcon: Icon(icon, color: mutedColor, size: 20),
+      filled: true,
+      fillColor: _surfaceColor,
+      contentPadding: EdgeInsets.zero,
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(10),
+        borderSide: BorderSide.none,
+      ),
+    );
+  }
+
+  // 상단 패널의 배경, 테두리, 그림자 스타일을 한곳에서 관리한다.
+  BoxDecoration get _panelDecoration => BoxDecoration(
+    color: _panelColor,
+    borderRadius: BorderRadius.circular(12),
+    border: Border.all(color: _borderColor),
+    boxShadow: const [
+      BoxShadow(color: Color(0x33000000), blurRadius: 16, offset: Offset(0, 6)),
+    ],
+  );
+
+  // 오버레이에서 반복해서 사용하는 색상 값들이다.
+  Color get _accentColor => const Color(0xFF14B8A6);
+  Color get _panelColor =>
+      _isDark ? const Color(0xEE0F172A) : const Color(0xEEFFFFFF);
+  Color get _surfaceColor =>
+      _isDark ? const Color(0xFF1E293B) : const Color(0xFFF1F5F9);
+  Color get _inactiveButtonColor =>
+      _isDark ? const Color(0x3314B8A6) : const Color(0x1A14B8A6);
+  Color get _borderColor =>
+      _isDark ? const Color(0x3345F3E5) : const Color(0xFFE2E8F0);
+  Color get _textColor => _isDark ? Colors.white : const Color(0xFF0F172A);
+  Color get _mutedColor =>
+      _isDark ? const Color(0xFF94A3B8) : const Color(0xFF64748B);
+}
