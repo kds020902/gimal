@@ -1,6 +1,5 @@
 package com.example.gimal.overlayutils;
 
-import android.app.Activity;
 import android.content.Context;
 import android.content.Intent;
 import android.graphics.PixelFormat;
@@ -25,17 +24,14 @@ import androidx.annotation.NonNull;
 
 import io.flutter.embedding.engine.plugins.FlutterPlugin;
 import io.flutter.embedding.engine.plugins.FlutterPlugin.FlutterPluginBinding;
-import io.flutter.embedding.engine.plugins.activity.ActivityAware;
-import io.flutter.embedding.engine.plugins.activity.ActivityPluginBinding;
 import io.flutter.plugin.common.MethodCall;
 import io.flutter.plugin.common.MethodChannel;
 
 public final class OverlayUtilsPlugin
-    implements FlutterPlugin, MethodChannel.MethodCallHandler, ActivityAware {
+    implements FlutterPlugin, MethodChannel.MethodCallHandler {
   private static final String TAG = "GimalOverlayUtils";
 
   private Context context;
-  private Activity activity;
   private MethodChannel channel;
   private final Handler mainHandler = new Handler(Looper.getMainLooper());
   private WindowManager webWindowManager;
@@ -58,35 +54,11 @@ public final class OverlayUtilsPlugin
     }
     channel = null;
     context = null;
-    activity = null;
-  }
-
-  @Override
-  public void onAttachedToActivity(@NonNull ActivityPluginBinding binding) {
-    activity = binding.getActivity();
-  }
-
-  @Override
-  public void onDetachedFromActivityForConfigChanges() {
-    activity = null;
-  }
-
-  @Override
-  public void onReattachedToActivityForConfigChanges(@NonNull ActivityPluginBinding binding) {
-    activity = binding.getActivity();
-  }
-
-  @Override
-  public void onDetachedFromActivity() {
-    activity = null;
   }
 
   @Override
   public void onMethodCall(@NonNull MethodCall call, @NonNull MethodChannel.Result result) {
-    if (call.method.equals("goHome")) {
-      goHome();
-      result.success(null);
-    } else if (call.method.equals("bringToFront")) {
+    if (call.method.equals("bringToFront")) {
       bringToFront();
       result.success(null);
     } else if (call.method.equals("openWebOverlay")) {
@@ -104,25 +76,6 @@ public final class OverlayUtilsPlugin
     } else {
       result.notImplemented();
     }
-  }
-
-  private void goHome() {
-    mainHandler.post(() -> {
-      Intent intent = new Intent(Intent.ACTION_MAIN);
-      intent.addCategory(Intent.CATEGORY_HOME);
-      intent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED);
-
-      try {
-        if (activity != null) {
-          activity.startActivity(intent);
-          activity.moveTaskToBack(true);
-        } else if (context != null) {
-          context.startActivity(intent);
-        }
-      } catch (Exception error) {
-        Log.e(TAG, "goHome failed", error);
-      }
-    });
   }
 
   private void bringToFront() {

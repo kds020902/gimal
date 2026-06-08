@@ -5,6 +5,10 @@ Flutter로 만든 오버레이 기반 컨트롤러 앱입니다.
 오버레이 창을 통해 다른 화면 위에서도
 웹 검색과 메모 확인을 할 수 있습니다.
 
+## 화면 예시
+
+![오버레이 아이콘 실행 화면](docs/screenshots/overlay_launcher.png)
+
 ## 주요 기능
 
 - URL 또는 검색어를 입력해 Google 검색 및 웹사이트 접속 및 북마크 저장 
@@ -15,7 +19,7 @@ Flutter로 만든 오버레이 기반 컨트롤러 앱입니다.
 ## APK 파일
 테스트용 APK 파일은 아래 링크에서 확인할 수 있습니다.
 
-[gimal-debug.apk](releases/gimal-debug.apk)
+[gimal-debug.apk 바로 다운로드](https://github.com/kds020902/gimal/raw/main/releases/gimal-debug.apk)
 
 ## 앞으로 개선하고 싶은 점
 

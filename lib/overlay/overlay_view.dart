@@ -125,18 +125,20 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
       _launcherPosition = null;
     }
 
-    await _alignFullScreenOverlay();
-    if (_isClosing || !mounted) return;
-
     setState(() {
       _expanded = true;
       _activeMode = null;
     });
+
+    try {
+      await _alignFullScreenOverlay();
+    } catch (error) {
+      debugPrint('alignFullScreenOverlay failed: $error');
+    }
   }
 
   // 오버레이 창 자체를 화면 전체 크기로 맞춘다.
   Future<void> _alignFullScreenOverlay() async {
-    await FlutterOverlayWindow.moveOverlay(OverlayPosition(0, 0));
     await FlutterOverlayWindow.resizeOverlay(
       WindowSize.matchParent,
       WindowSize.matchParent,
@@ -498,6 +500,7 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
   // 접혀 있을 때 사용자가 누를 수 있는 동그란 플로팅 아이콘이다.
   Widget _buildLauncherIcon() {
     return GestureDetector(
+      behavior: HitTestBehavior.opaque,
       onTap: _openOverlayUi,
       child: Container(
         width: _launcherIconSize,
