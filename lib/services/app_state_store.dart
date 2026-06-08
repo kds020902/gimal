@@ -15,6 +15,9 @@ class AppStateStore {
   static const String bookmarksKey = 'bookmarks';
   static const String memosKey = 'memos';
   static const String darkModeKey = 'darkMode';
+  static const String overlayExpandedKey = 'overlayExpanded';
+  static const String openFullOverlayEvent = 'openFullOverlay';
+  static const String openLauncherOverlayEvent = 'openLauncherOverlay';
   static Stream<dynamic>? _stateEvents;
 
   // 여러 화면이 같은 오버레이 이벤트를 같이 들을 수 있도록 broadcast stream으로 바꾼다.
@@ -71,6 +74,18 @@ class AppStateStore {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool(darkModeKey, isDark);
     await _notifyStateUpdated();
+  }
+
+  // 다음에 열릴 오버레이가 전체 화면인지 작은 아이콘인지 저장한다.
+  static Future<bool> loadOverlayExpanded() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.reload();
+    return prefs.getBool(overlayExpandedKey) ?? false;
+  }
+
+  static Future<void> saveOverlayExpanded(bool expanded) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(overlayExpandedKey, expanded);
   }
 
   // 처음 실행했을 때 보여줄 기본 북마크 목록이다.

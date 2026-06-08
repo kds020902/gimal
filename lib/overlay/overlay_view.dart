@@ -38,7 +38,6 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
   );
 
   // 접혀 있을 때 보이는 플로팅 아이콘 크기이다.
-  static const int _launcherSize = 72;
   static const double _launcherIconSize = 64;
 
   // URL 검색창과 메모 입력창에서 사용하는 컨트롤러이다.
@@ -49,9 +48,9 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
 
   // 오버레이 화면의 현재 상태를 기억하는 값들이다.
   OverlayMode? _activeMode;
-  OverlayPosition? _launcherPosition;
   int? _memoEditIndex;
-  bool _expanded = true;
+  bool _stateLoaded = false;
+  bool _expanded = false;
   bool _webOpen = false;
   bool _isDark = false;
   bool _isClosing = false;
@@ -103,56 +102,24 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
     final bookmarks = await AppStateStore.loadBookmarks();
     final memos = await AppStateStore.loadMemos();
     final isDark = await AppStateStore.loadDarkMode();
+    final expanded = await AppStateStore.loadOverlayExpanded();
 
     if (_isClosing || !mounted) return;
     setState(() {
       _bookmarks = bookmarks;
       _memos = memos;
       _isDark = isDark;
+      _expanded = expanded;
+      _stateLoaded = true;
     });
   }
 
   // 작은 플로팅 아이콘을 눌렀을 때 전체 오버레이 메뉴를 여는 함수이다.
   Future<void> _openOverlayUi() async {
-    if (_isClosing) return;
-
-    await _loadState();
-    if (_isClosing || !mounted) return;
-
-    try {
-      _launcherPosition = await FlutterOverlayWindow.getOverlayPosition();
-    } catch (_) {
-      _launcherPosition = null;
-    }
-
-    final expanded = await _alignFullScreenOverlay();
-    if (_isClosing || !mounted || !expanded) return;
-
-    setState(() {
-      _expanded = true;
-      _activeMode = null;
-    });
-  }
-
-  // 오버레이 창 자체를 화면 전체 크기로 맞춘다.
-  Future<bool> _alignFullScreenOverlay() async {
-    try {
-      await FlutterOverlayWindow.moveOverlay(OverlayPosition(0, 0));
-      final resized = await FlutterOverlayWindow.resizeOverlay(
-        WindowSize.matchParent,
-        WindowSize.fullCover,
-        false,
-      );
-      await FlutterOverlayWindow.moveOverlay(OverlayPosition(0, 0));
-
-      // 실제 휴대폰에서는 창 크기 변경 직후 Flutter 화면 크기가 한 박자 늦게 들어올 수 있다.
-      await Future<void>.delayed(const Duration(milliseconds: 60));
-      return resized != false;
-    } catch (error) {
-      debugPrint('alignFullScreenOverlay failed: $error');
-      await _restoreLauncherWindow();
-      return false;
-    }
+    await _requestOverlayRestart(
+      expanded: true,
+      event: AppStateStore.openFullOverlayEvent,
+    );
   }
 
   // "앱으로" 버튼을 눌렀을 때 웹뷰를 닫고 메인 앱을 앞으로 가져온 뒤 오버레이를 종료한다.
@@ -184,29 +151,35 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
   Future<void> _collapseToLauncher() async {
     FocusManager.instance.primaryFocus?.unfocus();
     await _closeNativeWeb();
-    if (mounted) {
-      setState(() {
-        _expanded = false;
-        _webOpen = false;
-        _activeMode = null;
-      });
+    await _requestOverlayRestart(
+      expanded: false,
+      event: AppStateStore.openLauncherOverlayEvent,
+    );
+  }
+
+  // 같은 창을 키우지 않고 메인 앱에 새 오버레이를 띄우라고 알린 뒤 현재 오버레이를 닫는다.
+  Future<void> _requestOverlayRestart({
+    required bool expanded,
+    required String event,
+  }) async {
+    if (_isClosing) return;
+    _isClosing = true;
+    _webOpen = false;
+    _activeMode = null;
+
+    await AppStateStore.saveOverlayExpanded(expanded);
+    try {
+      await FlutterOverlayWindow.shareData(event);
+    } catch (error) {
+      debugPrint('overlay restart event failed: $error');
     }
 
     await WidgetsBinding.instance.endOfFrame;
-    if (!mounted) return;
-
-    await _restoreLauncherWindow();
-  }
-
-  // 전체 화면 전환에 실패하거나 닫기 버튼을 눌렀을 때 다시 작은 아이콘 창으로 되돌린다.
-  Future<void> _restoreLauncherWindow() async {
-    await FlutterOverlayWindow.resizeOverlay(
-      _launcherSize,
-      _launcherSize,
-      true,
-    );
-    if (_launcherPosition != null) {
-      await FlutterOverlayWindow.moveOverlay(_launcherPosition!);
+    try {
+      await FlutterOverlayWindow.closeOverlay();
+    } catch (error) {
+      _isClosing = false;
+      debugPrint('closeOverlay failed: $error');
     }
   }
 
@@ -472,6 +445,10 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
+    if (!_stateLoaded) {
+      return const SizedBox.expand();
+    }
+
     // 아이콘 화면과 펼친 화면을 둘 다 유지하고, Offstage로 보이기만 바꾼다.
     return Stack(
       fit: StackFit.expand,

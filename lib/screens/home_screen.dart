@@ -25,7 +25,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     'com.example.gimal/home',
   );
 
+  // 작은 플로팅 아이콘 오버레이의 크기이다.
+  static const int _launcherSize = 72;
+
   StreamSubscription<dynamic>? _overlaySubscription;
+  bool _switchingOverlay = false;
 
   @override
   void initState() {
@@ -36,6 +40,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     _overlaySubscription = AppStateStore.stateEvents.listen((event) async {
       if (event == AppStateStore.stateUpdatedEvent) {
         await _reloadStoredState();
+      } else if (event == AppStateStore.openFullOverlayEvent) {
+        await _showFullOverlayFromLauncher();
+      } else if (event == AppStateStore.openLauncherOverlayEvent) {
+        await _showLauncherOverlayFromFull();
       }
     });
     _reloadStoredState();
@@ -67,20 +75,25 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     globalMemos = memos;
   }
 
-  // 오버레이 권한을 확인한 뒤 전체 오버레이 화면을 띄우고 홈 화면으로 이동한다.
+  // 오버레이 권한을 확인한 뒤 작은 오버레이 아이콘을 띄우고 홈 화면으로 이동한다.
   Future<void> _startOverlay() async {
     if (!await _checkOverlayPermission()) return;
 
+    await _showLauncherOverlay();
+    await _homeChannel.invokeMethod('goHome');
+  }
+
+  // 처음 시작할 때와 전체 화면을 닫았을 때 작은 아이콘 오버레이를 새로 연다.
+  Future<void> _showLauncherOverlay() async {
+    await AppStateStore.saveOverlayExpanded(false);
+
     await FlutterOverlayWindow.showOverlay(
-      enableDrag: false,
-      alignment: OverlayAlignment.topLeft,
+      enableDrag: true,
       overlayTitle: 'gimal',
       overlayContent: 'Quick overlay menu',
       flag: OverlayFlag.focusPointer,
-      positionGravity: PositionGravity.none,
-      startPosition: OverlayPosition(0, 0),
-      width: WindowSize.matchParent,
-      height: WindowSize.fullCover,
+      width: _launcherSize,
+      height: _launcherSize,
     );
 
     try {
@@ -88,8 +101,45 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     } catch (_) {
       debugPrint('Overlay state event was skipped.');
     }
+  }
 
-    await _homeChannel.invokeMethod('goHome');
+  // 작은 아이콘 오버레이가 닫힌 뒤 전체 화면 오버레이를 새로 연다.
+  Future<void> _showFullOverlayFromLauncher() async {
+    await _restartOverlay(expanded: true);
+  }
+
+  // 전체 화면 오버레이가 닫힌 뒤 작은 아이콘 오버레이를 새로 연다.
+  Future<void> _showLauncherOverlayFromFull() async {
+    await _restartOverlay(expanded: false);
+  }
+
+  // 같은 오버레이 창을 키우지 않고, 닫힌 뒤 새 크기로 다시 띄운다.
+  Future<void> _restartOverlay({required bool expanded}) async {
+    if (_switchingOverlay) return;
+    _switchingOverlay = true;
+
+    try {
+      await Future<void>.delayed(const Duration(milliseconds: 420));
+      await AppStateStore.saveOverlayExpanded(expanded);
+
+      await FlutterOverlayWindow.showOverlay(
+        enableDrag: !expanded,
+        alignment: expanded ? OverlayAlignment.topLeft : OverlayAlignment.center,
+        overlayTitle: 'gimal',
+        overlayContent: expanded ? 'Overlay menu' : 'Quick overlay menu',
+        flag: OverlayFlag.focusPointer,
+        positionGravity: PositionGravity.none,
+        startPosition: expanded ? OverlayPosition(0, 0) : null,
+        width: expanded ? WindowSize.matchParent : _launcherSize,
+        height: expanded ? WindowSize.fullCover : _launcherSize,
+      );
+
+      await FlutterOverlayWindow.shareData(AppStateStore.stateUpdatedEvent);
+    } catch (error) {
+      debugPrint('restartOverlay failed: $error');
+    } finally {
+      _switchingOverlay = false;
+    }
   }
 
   // Android 오버레이 권한이 없으면 사용자에게 권한 설정 화면으로 갈지 물어본다.
