@@ -2,6 +2,10 @@
 
 A new Flutter project.
 
+## Test APK
+
+테스트용 APK 파일은 `releases/gimal-debug.apk`에 있습니다.
+
 ## Getting Started
 
 This project is a starting point for a Flutter application.
