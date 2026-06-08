@@ -1,21 +1,29 @@
-# gimal
+# 안나가공 컨트롤러
 
-A new Flutter project.
+Flutter로 만든 오버레이 기반 컨트롤러 앱입니다.  
+메인 앱에서 URL 검색, 북마크, 메모를 관리하고, 오버레이 창을 통해 다른 화면 위에서도 빠르게 웹 검색과 메모 확인을 할 수 있습니다.
 
-## Test APK
+## 주요 기능
 
-테스트용 APK 파일은 `releases/gimal-debug.apk`에 있습니다.
+- URL 또는 검색어를 입력해 Google 검색 및 웹사이트 접속
+- WebView에서 현재 페이지를 북마크로 저장
+- 저장된 북마크 목록 확인 및 수정
+- 메모 추가, 수정, 삭제
+- 메인 앱과 오버레이 간 북마크, 메모, 다크모드 설정 연동
+- 오버레이 전환 버튼을 통해 플로팅 아이콘 실행
+- 오버레이 안에서 URL 검색, 북마크 열기, 메모 관리
+- 다크모드 켜기/끄기
 
-## Getting Started
+## APK 파일
 
-This project is a starting point for a Flutter application.
+테스트용 APK 파일은 아래 링크에서 확인할 수 있습니다.
 
-A few resources to get you started if this is your first Flutter project:
+[gimal-debug.apk](releases/gimal-debug.apk)
 
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
+## 앞으로 개선하고 싶은 점
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+- 북마크와 메모 관리 화면 UI 정리
+- 오버레이 화면의 가로/세로 모드 디자인 개선
+- APK 용량 줄이기
+- 오버레이 안에서 북마크 추가 기능 보완
+- 앱 아이콘과 전체 디자인 완성도 높이기
