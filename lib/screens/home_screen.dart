@@ -73,9 +73,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
     await FlutterOverlayWindow.showOverlay(
       enableDrag: false,
+      alignment: OverlayAlignment.topLeft,
       overlayTitle: 'gimal',
       overlayContent: 'Quick overlay menu',
       flag: OverlayFlag.focusPointer,
+      positionGravity: PositionGravity.none,
+      startPosition: OverlayPosition(0, 0),
       width: WindowSize.matchParent,
       height: WindowSize.fullCover,
     );
