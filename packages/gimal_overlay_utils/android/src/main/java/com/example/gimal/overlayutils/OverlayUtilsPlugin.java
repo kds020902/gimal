@@ -2,6 +2,7 @@ package com.example.gimal.overlayutils;
 
 import android.content.Context;
 import android.content.Intent;
+import android.graphics.Color;
 import android.graphics.PixelFormat;
 import android.hardware.display.DisplayManager;
 import android.net.Uri;
@@ -15,10 +16,13 @@ import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowManager;
+import android.view.inputmethod.EditorInfo;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
-import android.widget.FrameLayout;
+import android.widget.Button;
+import android.widget.EditText;
+import android.widget.LinearLayout;
 
 import androidx.annotation.NonNull;
 
@@ -36,8 +40,9 @@ public final class OverlayUtilsPlugin
   private final Handler mainHandler = new Handler(Looper.getMainLooper());
   private WindowManager webWindowManager;
   private Context webContext;
-  private FrameLayout webOverlayView;
+  private LinearLayout webOverlayView;
   private WebView webView;
+  private EditText addressInput;
 
   @Override
   public void onAttachedToEngine(@NonNull FlutterPluginBinding binding) {
@@ -48,7 +53,7 @@ public final class OverlayUtilsPlugin
 
   @Override
   public void onDetachedFromEngine(@NonNull FlutterPluginBinding binding) {
-    closeWebOverlay();
+    closeWebOverlay(false);
     if (channel != null) {
       channel.setMethodCallHandler(null);
     }
@@ -67,11 +72,8 @@ public final class OverlayUtilsPlugin
     } else if (call.method.equals("updateWebOverlayBounds")) {
       updateWebOverlayBounds(call);
       result.success(null);
-    } else if (call.method.equals("webGoBack")) {
-      webGoBack();
-      result.success(null);
     } else if (call.method.equals("closeWebOverlay")) {
-      closeWebOverlay();
+      closeWebOverlay(false);
       result.success(null);
     } else {
       result.notImplemented();
@@ -119,7 +121,14 @@ public final class OverlayUtilsPlugin
       throw new IllegalStateException("WindowManager is not available.");
     }
 
-    webOverlayView = new FrameLayout(webContext);
+    webOverlayView = new LinearLayout(webContext);
+    webOverlayView.setOrientation(LinearLayout.VERTICAL);
+    webOverlayView.setBackgroundColor(Color.WHITE);
+    webOverlayView.addView(
+        createWebControlBar(),
+        new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            dp(58)));
 
     webView = new WebView(webContext);
     webView.setLayerType(View.LAYER_TYPE_SOFTWARE, null);
@@ -128,13 +137,21 @@ public final class OverlayUtilsPlugin
     settings.setDomStorageEnabled(true);
     settings.setUseWideViewPort(true);
     settings.setLoadWithOverviewMode(true);
-    webView.setWebViewClient(new WebViewClient());
+    webView.setWebViewClient(new WebViewClient() {
+      @Override
+      public void onPageFinished(WebView view, String url) {
+        if (addressInput != null && url != null) {
+          addressInput.setText(url);
+        }
+      }
+    });
 
     webOverlayView.addView(
         webView,
-        new FrameLayout.LayoutParams(
+        new LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
-            ViewGroup.LayoutParams.MATCH_PARENT));
+            0,
+            1));
 
     WindowManager.LayoutParams params = webOverlayParams(call);
     webWindowManager.addView(webOverlayView, params);
@@ -148,9 +165,63 @@ public final class OverlayUtilsPlugin
     });
   }
 
+  private LinearLayout createWebControlBar() {
+    LinearLayout bar = new LinearLayout(webContext);
+    bar.setOrientation(LinearLayout.HORIZONTAL);
+    bar.setGravity(Gravity.CENTER_VERTICAL);
+    bar.setPadding(dp(8), dp(8), dp(8), dp(8));
+    bar.setBackgroundColor(Color.rgb(248, 250, 252));
+
+    Button closeButton = smallButton("X");
+    closeButton.setOnClickListener(view -> closeWebOverlay(true));
+    bar.addView(closeButton, new LinearLayout.LayoutParams(dp(44), dp(42)));
+
+    addressInput = new EditText(webContext);
+    addressInput.setSingleLine(true);
+    addressInput.setTextSize(14);
+    addressInput.setHint("URL or search");
+    addressInput.setImeOptions(EditorInfo.IME_ACTION_GO);
+    addressInput.setOnEditorActionListener((view, actionId, event) -> {
+      if (actionId == EditorInfo.IME_ACTION_GO) {
+        loadWebPage(addressInput.getText().toString());
+        return true;
+      }
+      return false;
+    });
+    LinearLayout.LayoutParams inputParams =
+        new LinearLayout.LayoutParams(0, dp(42), 1);
+    inputParams.setMargins(dp(6), 0, dp(6), 0);
+    bar.addView(addressInput, inputParams);
+
+    Button goButton = smallButton("\uC774\uB3D9");
+    goButton.setOnClickListener(view -> loadWebPage(addressInput.getText().toString()));
+    bar.addView(goButton, new LinearLayout.LayoutParams(dp(56), dp(42)));
+
+    Button backButton = smallButton("<-");
+    backButton.setOnClickListener(view -> webGoBack());
+    LinearLayout.LayoutParams backParams =
+        new LinearLayout.LayoutParams(dp(44), dp(42));
+    backParams.setMargins(dp(6), 0, 0, 0);
+    bar.addView(backButton, backParams);
+
+    return bar;
+  }
+
+  private Button smallButton(String text) {
+    Button button = new Button(webContext);
+    button.setAllCaps(false);
+    button.setText(text);
+    button.setTextSize(12);
+    button.setPadding(0, 0, 0, 0);
+    return button;
+  }
+
   private void loadWebPage(String value) {
     String url = normalizeUrl(value);
     if (url.isEmpty() || webView == null) return;
+    if (addressInput != null) {
+      addressInput.setText(url);
+    }
     webView.loadUrl(url);
   }
 
@@ -166,21 +237,26 @@ public final class OverlayUtilsPlugin
     return "https://www.google.com/search?q=" + Uri.encode(trimmed);
   }
 
-  private void closeWebOverlay() {
+  private void closeWebOverlay(boolean notifyDart) {
     WindowManager manager = webWindowManager;
-    FrameLayout overlay = webOverlayView;
+    LinearLayout overlay = webOverlayView;
     WebView currentWebView = webView;
 
     webWindowManager = null;
     webContext = null;
     webOverlayView = null;
     webView = null;
+    addressInput = null;
 
     mainHandler.post(() -> {
-      if (overlay == null || manager == null) return;
-      manager.removeView(overlay);
+      if (overlay != null && manager != null) {
+        manager.removeView(overlay);
+      }
       if (currentWebView != null) {
         currentWebView.destroy();
+      }
+      if (notifyDart && channel != null) {
+        channel.invokeMethod("webOverlayClosed", null);
       }
     });
   }

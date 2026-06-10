@@ -77,6 +77,7 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
         _loadState();
       }
     });
+    _utilsChannel.setMethodCallHandler(_handleUtilsCall);
 
     _loadState();
   }
@@ -91,7 +92,23 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
     _memoContentController.dispose();
     _bookmarkScrollController.dispose();
     _memoScrollController.dispose();
+    _utilsChannel.setMethodCallHandler(null);
     super.dispose();
+  }
+
+  Future<void> _handleUtilsCall(MethodCall call) async {
+    if (call.method == 'webOverlayClosed') {
+      await _handleNativeWebClosed();
+    }
+  }
+
+  Future<void> _handleNativeWebClosed() async {
+    if (_isClosing || !mounted) return;
+    setState(() => _webOpen = false);
+    await WidgetsBinding.instance.endOfFrame;
+    if (!_isClosing && mounted) {
+      await _resizeToExpandedOverlay();
+    }
   }
 
   // 앱으로 돌아갔다가 다시 오버레이를 켤 때 남아 있을 수 있는 "닫히는 중" 상태를 초기화한다.
@@ -115,6 +132,10 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
       if (_isClosing || !mounted) return;
       if (_isCollapsed) {
         await _moveLauncherOverlay();
+        return;
+      }
+      if (_webOpen) {
+        await _updateWebOverlayBounds();
         return;
       }
       await _resizeToExpandedOverlay();
@@ -315,17 +336,7 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
     }
   }
 
-  // Android WebView의 뒤로가기 기능을 실행한다.
-  Future<void> _goBackWeb() async {
-    if (_isClosing) return;
-    try {
-      await _utilsChannel.invokeMethod('webGoBack');
-    } catch (error) {
-      debugPrint('webGoBack failed: $error');
-    }
-  }
-
-  // 웹뷰 조작 바의 X 버튼을 눌렀을 때 웹뷰 오버레이만 닫는다.
+  // 웹뷰를 닫을 때 Android WebView 창만 제거하고 Flutter 오버레이 높이를 원래대로 돌린다.
   Future<void> _closeWeb() async {
     await _closeNativeWeb();
     if (_isClosing || !mounted) return;
@@ -467,13 +478,13 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
     };
   }
 
-  // 메인 위젯, 웹뷰 조작 위젯 순서를 기준으로 웹뷰 화면이 시작할 y 위치를 구한다.
+  // 메인 위젯 바로 아래에서 Android WebView 창이 시작하도록 y 위치를 구한다.
   int _webTopOffset() {
     final media = MediaQuery.of(context);
     final isLandscape = _isLandscapeScreen();
     var height = media.padding.top + 8;
     height += _mainWidgetHeight(isLandscape);
-    height += 6 + _webControlWidgetHeight() + 12;
+    height += 6;
 
     return height.ceil();
   }
@@ -496,10 +507,6 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
       return _memoPanelHeight(compact);
     }
     return 42;
-  }
-
-  double _webControlWidgetHeight() {
-    return 58;
   }
 
   // 현재 화면이 가로 방향인지 세로 방향인지 판단한다.
@@ -584,13 +591,7 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
                 padding: EdgeInsets.zero,
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
-                  children: [
-                    _buildTopOverlayPanel(isLandscape: isLandscape),
-                    if (_webOpen) ...[
-                      const SizedBox(height: 6),
-                      _buildWebHeaderPanel(),
-                    ],
-                  ],
+                  children: [_buildTopOverlayPanel(isLandscape: isLandscape)],
                 ),
               ),
             ),
@@ -656,25 +657,6 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
           ],
         ],
       ),
-    );
-  }
-
-  Widget _buildWebHeaderPanel() {
-    return Container(
-      width: double.infinity,
-      decoration: BoxDecoration(
-        color: _panelColor,
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
-        border: Border.all(color: _borderColor),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x33000000),
-            blurRadius: 16,
-            offset: Offset(0, 6),
-          ),
-        ],
-      ),
-      child: _buildWebControlBar(),
     );
   }
 
@@ -815,39 +797,6 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
           ),
         ),
       ],
-    );
-  }
-
-  // 웹뷰가 열렸을 때 URL 입력, 이동, 뒤로가기, 닫기 버튼을 보여준다.
-  Widget _buildWebControlBar() {
-    return Padding(
-      padding: const EdgeInsets.all(8),
-      child: Row(
-        children: [
-          _smallTextButton('X', _closeWeb, danger: true, width: 44),
-          const SizedBox(width: 6),
-          Expanded(
-            child: SizedBox(
-              height: 42,
-              child: TextField(
-                controller: _searchController,
-                style: TextStyle(color: _textColor, fontSize: 14),
-                textInputAction: TextInputAction.go,
-                decoration: _fieldDecoration(
-                  'URL 또는 검색어',
-                  Icons.public,
-                  _mutedColor,
-                ),
-                onSubmitted: (_) => _searchUrl(),
-              ),
-            ),
-          ),
-          const SizedBox(width: 6),
-          _smallTextButton('이동', _searchUrl, width: 54),
-          const SizedBox(width: 6),
-          _smallTextButton('←', _goBackWeb, width: 44),
-        ],
-      ),
     );
   }
 
