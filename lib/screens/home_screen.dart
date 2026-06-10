@@ -26,13 +26,11 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   );
 
   // 작은 플로팅 아이콘 오버레이의 크기이다.
-  static const int _launcherSize = 72;
+  static const int _launcherSize = 96;
   static const int _portraitOverlayPanelHeight = 380;
   static const int _landscapeOverlayPanelHeight = 300;
 
   StreamSubscription<dynamic>? _overlaySubscription;
-  bool _switchingOverlay = false;
-
   @override
   void initState() {
     super.initState();
@@ -42,10 +40,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     _overlaySubscription = AppStateStore.stateEvents.listen((event) async {
       if (event == AppStateStore.stateUpdatedEvent) {
         await _reloadStoredState();
-      } else if (event == AppStateStore.openFullOverlayEvent) {
-        await _showFullOverlayFromLauncher();
-      } else if (event == AppStateStore.openLauncherOverlayEvent) {
-        await _showLauncherOverlayFromFull();
       }
     });
     _reloadStoredState();
@@ -83,31 +77,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
     await _openOverlayWindow(expanded: false, closeBeforeOpen: true);
     await _homeChannel.invokeMethod('goHome');
-  }
-
-  // 작은 아이콘 오버레이가 닫힌 뒤 전체 화면 오버레이를 새로 연다.
-  Future<void> _showFullOverlayFromLauncher() async {
-    await _restartOverlay(expanded: true);
-  }
-
-  // 전체 화면 오버레이가 닫힌 뒤 작은 아이콘 오버레이를 새로 연다.
-  Future<void> _showLauncherOverlayFromFull() async {
-    await _restartOverlay(expanded: false);
-  }
-
-  // 같은 오버레이 창을 키우지 않고, 닫힌 뒤 새 크기로 다시 띄운다.
-  Future<void> _restartOverlay({required bool expanded}) async {
-    if (_switchingOverlay) return;
-    _switchingOverlay = true;
-
-    try {
-      await _waitUntilOverlayClosed();
-      await _openOverlayWindow(expanded: expanded);
-    } catch (error) {
-      debugPrint('restartOverlay failed: $error');
-    } finally {
-      _switchingOverlay = false;
-    }
   }
 
   // 실제 오버레이 창을 여는 공통 함수이다.

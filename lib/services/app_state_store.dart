@@ -16,8 +16,6 @@ class AppStateStore {
   static const String memosKey = 'memos';
   static const String darkModeKey = 'darkMode';
   static const String overlayExpandedKey = 'overlayExpanded';
-  static const String openFullOverlayEvent = 'openFullOverlay';
-  static const String openLauncherOverlayEvent = 'openLauncherOverlay';
   static Stream<dynamic>? _stateEvents;
 
   // 여러 화면이 같은 오버레이 이벤트를 같이 들을 수 있도록 broadcast stream으로 바꾼다.

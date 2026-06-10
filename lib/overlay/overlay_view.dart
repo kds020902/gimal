@@ -38,7 +38,10 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
   );
 
   // 접혀 있을 때 보이는 플로팅 아이콘 크기이다.
-  static const double _launcherIconSize = 64;
+  static const int _launcherWindowSize = 96;
+  static const double _launcherIconSize = 84;
+  static const int _portraitOverlayPanelHeight = 380;
+  static const int _landscapeOverlayPanelHeight = 300;
 
   // URL 검색창과 메모 입력창에서 사용하는 컨트롤러이다.
   final TextEditingController _searchController = TextEditingController();
@@ -54,6 +57,7 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
   bool _webOpen = false;
   bool _isDark = false;
   bool _isClosing = false;
+  bool _isChangingSize = false;
   bool _memoEditorOpen = false;
   List<Map<String, String>> _bookmarks = [];
   List<Map<String, String>> _memos = [];
@@ -127,10 +131,7 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
 
   // 작은 플로팅 아이콘을 눌렀을 때 전체 오버레이 메뉴를 여는 함수이다.
   Future<void> _openOverlayUi() async {
-    await _requestOverlayRestart(
-      expanded: true,
-      event: AppStateStore.openFullOverlayEvent,
-    );
+    await _changeOverlaySize(expanded: true);
   }
 
   // "앱으로" 버튼을 눌렀을 때 웹뷰를 닫고 메인 앱을 앞으로 가져온 뒤 오버레이를 종료한다.
@@ -162,36 +163,79 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
   Future<void> _collapseToLauncher() async {
     FocusManager.instance.primaryFocus?.unfocus();
     await _closeNativeWeb();
-    await _requestOverlayRestart(
-      expanded: false,
-      event: AppStateStore.openLauncherOverlayEvent,
-    );
+    await _changeOverlaySize(expanded: false);
   }
 
-  // 같은 창을 키우지 않고 메인 앱에 새 오버레이를 띄우라고 알린 뒤 현재 오버레이를 닫는다.
-  Future<void> _requestOverlayRestart({
-    required bool expanded,
-    required String event,
-  }) async {
-    if (_isClosing) return;
-    _isClosing = true;
-    _webOpen = false;
-    _activeMode = null;
+  // 작은 아이콘과 상단 탭 오버레이를 같은 창 안에서 크기만 바꿔 전환한다.
+  Future<void> _changeOverlaySize({required bool expanded}) async {
+    if (_isClosing || _isChangingSize) return;
+    _isChangingSize = true;
 
-    await AppStateStore.saveOverlayExpanded(expanded);
-    try {
-      await FlutterOverlayWindow.shareData(event);
-    } catch (error) {
-      debugPrint('overlay restart event failed: $error');
-    }
+    final previousExpanded = _expanded;
+    final previousWebOpen = _webOpen;
+    final previousMode = _activeMode;
+    final previousMemoEditorOpen = _memoEditorOpen;
+    final previousMemoEditIndex = _memoEditIndex;
 
-    await WidgetsBinding.instance.endOfFrame;
     try {
-      await FlutterOverlayWindow.closeOverlay();
+      await AppStateStore.saveOverlayExpanded(expanded);
+      if (!mounted || _isClosing) return;
+
+      setState(() {
+        _expanded = expanded;
+        _webOpen = false;
+        _activeMode = null;
+        _memoEditorOpen = false;
+        _memoEditIndex = null;
+      });
+
+      await WidgetsBinding.instance.endOfFrame;
+
+      if (expanded) {
+        await FlutterOverlayWindow.resizeOverlay(
+          WindowSize.matchParent,
+          _expandedOverlayHeight(),
+          false,
+        );
+        await FlutterOverlayWindow.moveOverlay(OverlayPosition(0, 0));
+      } else {
+        await FlutterOverlayWindow.resizeOverlay(
+          _launcherWindowSize,
+          _launcherWindowSize,
+          true,
+        );
+        await FlutterOverlayWindow.moveOverlay(_launcherCenterPosition());
+      }
     } catch (error) {
-      _isClosing = false;
-      debugPrint('closeOverlay failed: $error');
+      debugPrint('changeOverlaySize failed: $error');
+      await AppStateStore.saveOverlayExpanded(previousExpanded);
+      if (mounted && !_isClosing) {
+        setState(() {
+          _expanded = previousExpanded;
+          _webOpen = previousWebOpen;
+          _activeMode = previousMode;
+          _memoEditorOpen = previousMemoEditorOpen;
+          _memoEditIndex = previousMemoEditIndex;
+        });
+      }
+    } finally {
+      _isChangingSize = false;
     }
+  }
+
+  // 화면 방향에 따라 상단 탭 오버레이가 차지할 높이를 정한다.
+  int _expandedOverlayHeight() {
+    final size = MediaQuery.sizeOf(context);
+    return size.width > size.height
+        ? _landscapeOverlayPanelHeight
+        : _portraitOverlayPanelHeight;
+  }
+
+  OverlayPosition _launcherCenterPosition() {
+    final size = MediaQuery.sizeOf(context);
+    final x = (size.width - _launcherWindowSize) / 2;
+    final y = (size.height - _launcherWindowSize) / 2;
+    return OverlayPosition(x < 0 ? 0.0 : x, y < 0 ? 0.0 : y);
   }
 
   // 오버레이에서 다크모드를 바꾸고 저장소에 저장한다.
@@ -516,7 +560,7 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
             ),
           ],
         ),
-        child: const Icon(Icons.layers, color: Colors.white, size: 28),
+        child: const Icon(Icons.layers, color: Colors.white, size: 36),
       ),
     );
   }
