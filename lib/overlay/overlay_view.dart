@@ -358,11 +358,6 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
 
   // 메모 추가 또는 수정 입력창을 오버레이 패널 안에 연다.
   Future<void> _openMemoEditor({int? index}) async {
-    if (_webOpen) {
-      await _closeWeb();
-      if (!mounted) return;
-    }
-
     if (index != null && (index < 0 || index >= _memos.length)) {
       return;
     }
@@ -386,6 +381,11 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
       _memoTitleController.clear();
       _memoContentController.clear();
     });
+  }
+
+  Future<void> _cancelMemoEditor() async {
+    _closeMemoEditor();
+    await _updateWebOverlayBounds();
   }
 
   // 메모 입력창의 내용을 새 메모로 추가하거나 기존 메모에 덮어쓴다.
@@ -474,7 +474,7 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
       'x': 0,
       'y': _webTopOffset(),
       'width': media.size.width.ceil(),
-      'height': -1,
+      'height': _webHeight(),
     };
   }
 
@@ -487,6 +487,12 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
     height += 6;
 
     return height.ceil();
+  }
+
+  int _webHeight() {
+    final media = MediaQuery.of(context);
+    final height = media.size.height - _webTopOffset() - media.padding.bottom;
+    return height.clamp(120.0, media.size.height).ceil();
   }
 
   double _mainWidgetHeight(bool compact) {
@@ -1060,7 +1066,7 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
                   const SizedBox(width: 6),
                 ],
                 const Spacer(),
-                _smallTextButton('취소', _closeMemoEditor, width: 48),
+                _smallTextButton('취소', _cancelMemoEditor, width: 48),
                 const SizedBox(width: 6),
                 _smallTextButton('저장', () => _saveMemoEditor(), width: 48),
               ],
