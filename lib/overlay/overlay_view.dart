@@ -474,7 +474,7 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
       'x': 0,
       'y': _webTopOffset(),
       'width': media.size.width.ceil(),
-      'height': _webHeight(),
+      'height': -1,
     };
   }
 
@@ -486,12 +486,6 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
     height += _mainWidgetHeight(isLandscape);
 
     return height.ceil();
-  }
-
-  int _webHeight() {
-    final media = MediaQuery.of(context);
-    final height = media.size.height - _webTopOffset();
-    return height.clamp(120.0, media.size.height).ceil();
   }
 
   double _mainWidgetHeight(bool compact) {
