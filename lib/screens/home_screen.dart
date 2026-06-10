@@ -25,8 +25,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     'com.example.gimal/home',
   );
 
-  static const int _portraitOverlayPanelHeight = 520;
-  static const int _landscapeOverlayPanelHeight = 420;
+  static const int _portraitOverlayPanelHeight = 600;
+  static const int _landscapeOverlayPanelHeight = 500;
 
   StreamSubscription<dynamic>? _overlaySubscription;
 

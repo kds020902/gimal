@@ -37,11 +37,17 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
     'com.example.gimal/utils',
   );
 
+  static const int _launcherWindowSize = 96;
+  static const double _launcherIconSize = 84;
+  static const int _portraitOverlayPanelHeight = 600;
+  static const int _landscapeOverlayPanelHeight = 500;
+
   // URL 검색창과 메모 입력창에서 사용하는 컨트롤러이다.
   final TextEditingController _searchController = TextEditingController();
   final TextEditingController _memoTitleController = TextEditingController();
   final TextEditingController _memoContentController = TextEditingController();
   final GlobalKey _panelKey = GlobalKey();
+  OverlayPosition? _launcherOverlayPosition;
   StreamSubscription<dynamic>? _overlaySubscription;
 
   // 오버레이 화면의 현재 상태를 기억하는 값들이다.
@@ -51,6 +57,9 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
   bool _webOpen = false;
   bool _isDark = false;
   bool _isClosing = false;
+  bool _isCollapsed = false;
+  bool _isChangingSize = false;
+  bool _lastLandscape = false;
   bool _memoEditorOpen = false;
   List<Map<String, String>> _bookmarks = [];
   List<Map<String, String>> _memos = [];
@@ -88,6 +97,11 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
     if (_isClosing) return;
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       if (_isClosing || !mounted) return;
+      if (_isCollapsed) {
+        await _moveLauncherOverlay();
+        return;
+      }
+      await _resizeToExpandedOverlay();
       await _updateWebOverlayBounds();
     });
   }
@@ -144,21 +158,87 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
     }
   }
 
-  // "닫기" 버튼을 눌렀을 때 오버레이 창을 완전히 닫는다.
-  Future<void> _closeOverlayOnly() async {
+  // "닫기" 버튼을 누르면 오버레이를 끄지 않고 작은 아이콘 모드로 접는다.
+  Future<void> _collapseToLauncher() async {
     FocusManager.instance.primaryFocus?.unfocus();
-    _isClosing = true;
-    _webOpen = false;
-    _activeMode = null;
+    if (_isClosing || _isChangingSize) return;
+    _isChangingSize = true;
 
     try {
       await _closeNativeWeb();
+      if (!mounted || _isClosing) return;
+
+      setState(() {
+        _isCollapsed = true;
+        _webOpen = false;
+        _activeMode = null;
+        _memoEditorOpen = false;
+        _memoEditIndex = null;
+      });
+
       await WidgetsBinding.instance.endOfFrame;
-      await FlutterOverlayWindow.closeOverlay();
+      final launcherPosition = _launcherPosition();
+      _launcherOverlayPosition = launcherPosition;
+      await FlutterOverlayWindow.resizeOverlay(
+        _launcherWindowSize,
+        _launcherWindowSize,
+        true,
+      );
+      await FlutterOverlayWindow.moveOverlay(launcherPosition);
     } catch (error) {
-      _isClosing = false;
-      debugPrint('closeOverlay failed: $error');
+      debugPrint('collapseToLauncher failed: $error');
+    } finally {
+      _isChangingSize = false;
     }
+  }
+
+  // 작은 아이콘을 누르면 같은 오버레이 창을 다시 상단 위젯 모드로 펼친다.
+  Future<void> _expandFromLauncher() async {
+    if (_isClosing || _isChangingSize) return;
+    _isChangingSize = true;
+
+    try {
+      _launcherOverlayPosition = null;
+      setState(() => _isCollapsed = false);
+      await WidgetsBinding.instance.endOfFrame;
+      await FlutterOverlayWindow.moveOverlay(OverlayPosition(0, 0));
+      await _resizeToExpandedOverlay();
+      await FlutterOverlayWindow.moveOverlay(OverlayPosition(0, 0));
+    } catch (error) {
+      debugPrint('expandFromLauncher failed: $error');
+    } finally {
+      _isChangingSize = false;
+    }
+  }
+
+  Future<void> _resizeToExpandedOverlay() async {
+    await FlutterOverlayWindow.resizeOverlay(
+      WindowSize.matchParent,
+      _expandedOverlayHeight(),
+      false,
+    );
+  }
+
+  Future<void> _moveLauncherOverlay() async {
+    await FlutterOverlayWindow.moveOverlay(
+      _launcherOverlayPosition ?? _launcherPosition(),
+    );
+  }
+
+  int _expandedOverlayHeight() {
+    return _lastLandscape
+        ? _landscapeOverlayPanelHeight
+        : _portraitOverlayPanelHeight;
+  }
+
+  OverlayPosition _launcherPosition() {
+    final media = MediaQuery.of(context);
+    final x = ((media.size.width - _launcherWindowSize) / 2).clamp(
+      0.0,
+      media.size.width,
+    );
+    final y = media.padding.top + 24.0;
+    return OverlayPosition(x.toDouble(), y);
   }
 
   // 오버레이에서 다크모드를 바꾸고 저장소에 저장한다.
@@ -440,12 +520,17 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
       );
     }
 
+    if (_isCollapsed) {
+      return Center(child: _buildLauncherIcon());
+    }
+
     return _buildExpandedOverlay();
   }
 
   // 펼쳐진 오버레이에서는 배경을 깔지 않고 상단 탭 패널만 고정해서 보여준다.
   Widget _buildExpandedOverlay() {
     final isLandscape = _isLandscapeScreen();
+    _lastLandscape = isLandscape;
     final maxPanelHeight = _maxPanelHeight();
 
     return SizedBox.expand(
@@ -465,6 +550,30 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
             ),
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _buildLauncherIcon() {
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: _expandFromLauncher,
+      child: Container(
+        width: _launcherIconSize,
+        height: _launcherIconSize,
+        decoration: BoxDecoration(
+          color: _accentColor,
+          shape: BoxShape.circle,
+          border: Border.all(color: Colors.white, width: 2),
+          boxShadow: const [
+            BoxShadow(
+              color: Color(0x66000000),
+              blurRadius: 16,
+              offset: Offset(0, 6),
+            ),
+          ],
+        ),
+        child: const Icon(Icons.layers, color: Colors.white, size: 36),
       ),
     );
   }
@@ -637,7 +746,7 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
           child: _menuActionButton(
             icon: Icons.keyboard_arrow_up,
             label: '닫기',
-            onPressed: _closeOverlayOnly,
+            onPressed: _collapseToLauncher,
           ),
         ),
         const SizedBox(width: 8),
