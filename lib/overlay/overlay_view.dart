@@ -41,6 +41,7 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
   final TextEditingController _searchController = TextEditingController();
   final TextEditingController _memoTitleController = TextEditingController();
   final TextEditingController _memoContentController = TextEditingController();
+  final GlobalKey _panelKey = GlobalKey();
   StreamSubscription<dynamic>? _overlaySubscription;
 
   // 오버레이 화면의 현재 상태를 기억하는 값들이다.
@@ -202,6 +203,9 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
         _searchController.text = url;
       });
 
+      await WidgetsBinding.instance.endOfFrame;
+      if (_isClosing || !mounted) return;
+
       await _utilsChannel.invokeMethod('openWebOverlay', {
         'url': url,
         ..._webBounds(),
@@ -344,7 +348,7 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
     final media = MediaQuery.of(context);
     final isLandscape = _isLandscapeScreen();
     final sideMargin = isLandscape ? 10 : 8;
-    final top = _webTopOffset() + 8;
+    final top = (_measuredPanelBottom() ?? _webTopOffset()) + 8;
 
     return {
       'x': sideMargin,
@@ -352,6 +356,19 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
       'width': (media.size.width - sideMargin * 2).ceil(),
       'height': -1,
     };
+  }
+
+  double? _measuredPanelBottom() {
+    final context = _panelKey.currentContext;
+    if (context == null) return null;
+
+    final renderObject = context.findRenderObject();
+    if (renderObject is! RenderBox || !renderObject.hasSize) {
+      return null;
+    }
+
+    final offset = renderObject.localToGlobal(Offset.zero);
+    return offset.dy + renderObject.size.height;
   }
 
   // 상단 버튼 바와 열린 패널 높이를 합쳐 웹뷰가 시작할 y 위치를 구한다.
@@ -431,6 +448,7 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
   // 펼쳐진 오버레이에서는 배경을 깔지 않고 상단 탭 패널만 고정해서 보여준다.
   Widget _buildExpandedOverlay() {
     final isLandscape = _isLandscapeScreen();
+    final maxPanelHeight = _maxPanelHeight();
 
     return SizedBox.expand(
       child: SafeArea(
@@ -443,11 +461,21 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
               isLandscape ? 10 : 8,
               0,
             ),
-            child: _buildTopOverlayPanel(isLandscape: isLandscape),
+            child: ConstrainedBox(
+              constraints: BoxConstraints(maxHeight: maxPanelHeight),
+              child: _buildTopOverlayPanel(isLandscape: isLandscape),
+            ),
           ),
         ),
       ),
     );
+  }
+
+  double _maxPanelHeight() {
+    final media = MediaQuery.of(context);
+    final height = media.size.height - media.padding.top - media.padding.bottom;
+    final minHeight = height < 160 ? height : 160.0;
+    return (height - 12).clamp(minHeight, height).toDouble();
   }
 
   // 상단 버튼 바, 웹뷰 조작 바, 선택된 기능 패널을 한 덩어리로 묶는다.
@@ -456,28 +484,32 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
     final mutedColor = _mutedColor;
 
     return Container(
+      key: _panelKey,
       width: double.infinity,
       decoration: _panelDecoration,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          _buildButtonBar(isLandscape: isLandscape),
-          if (_webOpen) ...[
-            Divider(height: 1, color: _borderColor),
-            _buildWebControlBar(),
-          ],
-          if (_activeMode != null) ...[
-            Divider(height: 1, color: _borderColor),
-            Padding(
-              padding: EdgeInsets.all(isLandscape ? 8 : 10),
-              child: _buildActivePanel(
-                textColor: textColor,
-                mutedColor: mutedColor,
-                isLandscape: isLandscape,
+      child: SingleChildScrollView(
+        padding: EdgeInsets.zero,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _buildButtonBar(isLandscape: isLandscape),
+            if (_webOpen) ...[
+              Divider(height: 1, color: _borderColor),
+              _buildWebControlBar(),
+            ],
+            if (_activeMode != null) ...[
+              Divider(height: 1, color: _borderColor),
+              Padding(
+                padding: EdgeInsets.all(isLandscape ? 8 : 10),
+                child: _buildActivePanel(
+                  textColor: textColor,
+                  mutedColor: mutedColor,
+                  isLandscape: isLandscape,
+                ),
               ),
-            ),
+            ],
           ],
-        ],
+        ),
       ),
     );
   }
