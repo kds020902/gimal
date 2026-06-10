@@ -99,10 +99,21 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
   Future<void> _loadState() async {
     if (_isClosing) return;
 
-    final bookmarks = await AppStateStore.loadBookmarks();
-    final memos = await AppStateStore.loadMemos();
-    final isDark = await AppStateStore.loadDarkMode();
-    final expanded = await AppStateStore.loadOverlayExpanded();
+    var bookmarks = _bookmarks.isEmpty
+        ? AppStateStore.defaultBookmarks()
+        : _bookmarks;
+    var memos = _memos;
+    var isDark = _isDark;
+    var expanded = _expanded;
+
+    try {
+      bookmarks = await AppStateStore.loadBookmarks();
+      memos = await AppStateStore.loadMemos();
+      isDark = await AppStateStore.loadDarkMode();
+      expanded = await AppStateStore.loadOverlayExpanded();
+    } catch (error) {
+      debugPrint('load overlay state failed: $error');
+    }
 
     if (_isClosing || !mounted) return;
     setState(() {
@@ -371,19 +382,14 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
   Map<String, int> _webBounds() {
     final media = MediaQuery.of(context);
     final isLandscape = _isLandscapeScreen();
-    final sideMargin = isLandscape ? 10 : 12;
-    final top = _webTopOffset() + (isLandscape ? 8 : 10);
-    final height =
-        media.size.height -
-        top -
-        media.padding.bottom -
-        (isLandscape ? 16 : 72);
+    final sideMargin = isLandscape ? 10 : 8;
+    final top = _webTopOffset() + 8;
 
     return {
       'x': sideMargin,
       'y': top.ceil(),
       'width': (media.size.width - sideMargin * 2).ceil(),
-      'height': height.clamp(80, media.size.height).ceil(),
+      'height': -1,
     };
   }
 
@@ -446,7 +452,16 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
   @override
   Widget build(BuildContext context) {
     if (!_stateLoaded) {
-      return const SizedBox.expand();
+      return const ColoredBox(
+        color: Color(0xCC020617),
+        child: Center(
+          child: SizedBox(
+            width: 28,
+            height: 28,
+            child: CircularProgressIndicator(strokeWidth: 3),
+          ),
+        ),
+      );
     }
 
     // 아이콘 화면과 펼친 화면을 둘 다 유지하고, Offstage로 보이기만 바꾼다.
@@ -459,28 +474,22 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
     );
   }
 
-  // 펼쳐진 오버레이의 반투명 배경과 상단 패널을 만든다.
+  // 펼쳐진 오버레이에서는 배경을 깔지 않고 상단 탭 패널만 고정해서 보여준다.
   Widget _buildExpandedOverlay() {
     final isLandscape = _isLandscapeScreen();
-    final scrimColor = _isDark
-        ? const Color(0xE6020617)
-        : const Color(0xE6F8FAFC);
 
     return SizedBox.expand(
-      child: ColoredBox(
-        color: scrimColor,
-        child: SafeArea(
-          child: Align(
-            alignment: Alignment.topCenter,
-            child: Padding(
-              padding: EdgeInsets.fromLTRB(
-                isLandscape ? 10 : 8,
-                8,
-                isLandscape ? 10 : 8,
-                0,
-              ),
-              child: _buildTopOverlayPanel(isLandscape: isLandscape),
+      child: SafeArea(
+        child: Align(
+          alignment: Alignment.topCenter,
+          child: Padding(
+            padding: EdgeInsets.fromLTRB(
+              isLandscape ? 10 : 8,
+              8,
+              isLandscape ? 10 : 8,
+              0,
             ),
+            child: _buildTopOverlayPanel(isLandscape: isLandscape),
           ),
         ),
       ),
@@ -1107,7 +1116,7 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
   // 오버레이에서 반복해서 사용하는 색상 값들이다.
   Color get _accentColor => const Color(0xFF14B8A6);
   Color get _panelColor =>
-      _isDark ? const Color(0xEE0F172A) : const Color(0xEEFFFFFF);
+      _isDark ? const Color(0xEE0F172A) : const Color(0xDDF8FAFC);
   Color get _surfaceColor =>
       _isDark ? const Color(0xFF1E293B) : const Color(0xFFF1F5F9);
   Color get _inactiveButtonColor =>

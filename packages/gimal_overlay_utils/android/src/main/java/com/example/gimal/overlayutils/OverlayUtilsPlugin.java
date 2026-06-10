@@ -195,17 +195,31 @@ public final class OverlayUtilsPlugin
   }
 
   private WindowManager.LayoutParams webOverlayParams(MethodCall call) {
+    int x = dp(numberArgument(call, "x", 12));
+    int y = dp(numberArgument(call, "y", 140));
+    int width = dp(numberArgument(call, "width", 320));
+    int requestedHeight = numberArgument(call, "height", 360);
+    int height = requestedHeight <= 0
+        ? remainingDisplayHeight(y)
+        : dp(requestedHeight);
+
     WindowManager.LayoutParams params = new WindowManager.LayoutParams(
-        dp(numberArgument(call, "width", 320)),
-        dp(numberArgument(call, "height", 360)),
+        width,
+        height,
         overlayType(),
         WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
         PixelFormat.TRANSLUCENT);
     params.gravity = Gravity.TOP | Gravity.START;
-    params.x = dp(numberArgument(call, "x", 12));
-    params.y = dp(numberArgument(call, "y", 140));
+    params.x = x;
+    params.y = y;
     params.softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE;
     return params;
+  }
+
+  private int remainingDisplayHeight(int topPx) {
+    int displayHeight = context.getResources().getDisplayMetrics().heightPixels;
+    int bottomMargin = dp(14);
+    return Math.max(dp(120), displayHeight - topPx - bottomMargin);
   }
 
   private int overlayType() {

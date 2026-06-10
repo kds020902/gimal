@@ -27,6 +27,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   // 작은 플로팅 아이콘 오버레이의 크기이다.
   static const int _launcherSize = 72;
+  static const int _portraitOverlayPanelHeight = 380;
+  static const int _landscapeOverlayPanelHeight = 300;
 
   StreamSubscription<dynamic>? _overlaySubscription;
   bool _switchingOverlay = false;
@@ -79,28 +81,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   Future<void> _startOverlay() async {
     if (!await _checkOverlayPermission()) return;
 
-    await _showLauncherOverlay();
+    await _openOverlayWindow(expanded: false, closeBeforeOpen: true);
     await _homeChannel.invokeMethod('goHome');
-  }
-
-  // 처음 시작할 때와 전체 화면을 닫았을 때 작은 아이콘 오버레이를 새로 연다.
-  Future<void> _showLauncherOverlay() async {
-    await AppStateStore.saveOverlayExpanded(false);
-
-    await FlutterOverlayWindow.showOverlay(
-      enableDrag: true,
-      overlayTitle: 'gimal',
-      overlayContent: 'Quick overlay menu',
-      flag: OverlayFlag.focusPointer,
-      width: _launcherSize,
-      height: _launcherSize,
-    );
-
-    try {
-      await FlutterOverlayWindow.shareData(AppStateStore.stateUpdatedEvent);
-    } catch (_) {
-      debugPrint('Overlay state event was skipped.');
-    }
   }
 
   // 작은 아이콘 오버레이가 닫힌 뒤 전체 화면 오버레이를 새로 연다.
@@ -119,27 +101,88 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     _switchingOverlay = true;
 
     try {
-      await Future<void>.delayed(const Duration(milliseconds: 420));
-      await AppStateStore.saveOverlayExpanded(expanded);
-
-      await FlutterOverlayWindow.showOverlay(
-        enableDrag: !expanded,
-        alignment: expanded ? OverlayAlignment.topLeft : OverlayAlignment.center,
-        overlayTitle: 'gimal',
-        overlayContent: expanded ? 'Overlay menu' : 'Quick overlay menu',
-        flag: OverlayFlag.focusPointer,
-        positionGravity: PositionGravity.none,
-        startPosition: expanded ? OverlayPosition(0, 0) : null,
-        width: expanded ? WindowSize.matchParent : _launcherSize,
-        height: expanded ? WindowSize.fullCover : _launcherSize,
-      );
-
-      await FlutterOverlayWindow.shareData(AppStateStore.stateUpdatedEvent);
+      await _waitUntilOverlayClosed();
+      await _openOverlayWindow(expanded: expanded);
     } catch (error) {
       debugPrint('restartOverlay failed: $error');
     } finally {
       _switchingOverlay = false;
     }
+  }
+
+  // 실제 오버레이 창을 여는 공통 함수이다.
+  Future<void> _openOverlayWindow({
+    required bool expanded,
+    bool closeBeforeOpen = false,
+  }) async {
+    if (closeBeforeOpen) {
+      await _closeOverlayIfActive();
+    }
+
+    await AppStateStore.saveOverlayExpanded(expanded);
+
+    await FlutterOverlayWindow.showOverlay(
+      enableDrag: !expanded,
+      alignment: expanded ? OverlayAlignment.topLeft : OverlayAlignment.center,
+      overlayTitle: 'gimal',
+      overlayContent: expanded ? 'Overlay menu' : 'Quick overlay menu',
+      flag: OverlayFlag.focusPointer,
+      positionGravity: PositionGravity.none,
+      startPosition: expanded ? OverlayPosition(0, 0) : null,
+      width: expanded ? WindowSize.matchParent : _launcherSize,
+      height: expanded ? _expandedOverlayHeight() : _launcherSize,
+    );
+
+    await Future<void>.delayed(const Duration(milliseconds: 180));
+    try {
+      await FlutterOverlayWindow.shareData(AppStateStore.stateUpdatedEvent);
+    } catch (_) {
+      debugPrint('Overlay state event was skipped.');
+    }
+  }
+
+  // 전체 오버레이 대신 상단 패널이 들어갈 만큼만 오버레이 창 높이를 잡는다.
+  int _expandedOverlayHeight() {
+    final size = MediaQuery.sizeOf(context);
+    return size.width > size.height
+        ? _landscapeOverlayPanelHeight
+        : _portraitOverlayPanelHeight;
+  }
+
+  // 이미 떠 있는 오버레이가 있으면 먼저 닫아 이전 투명 창이 남지 않게 한다.
+  Future<void> _closeOverlayIfActive() async {
+    try {
+      if (await FlutterOverlayWindow.isActive()) {
+        await FlutterOverlayWindow.closeOverlay();
+        await _waitUntilOverlayClosed();
+      }
+    } catch (error) {
+      debugPrint('closeOverlayIfActive failed: $error');
+    }
+  }
+
+  // closeOverlay 직후 바로 showOverlay를 호출하면 실제 폰에서 투명 창만 남을 수 있어 닫힘을 기다린다.
+  Future<void> _waitUntilOverlayClosed() async {
+    for (var count = 0; count < 24; count++) {
+      try {
+        if (!await FlutterOverlayWindow.isActive()) {
+          await Future<void>.delayed(const Duration(milliseconds: 180));
+          return;
+        }
+      } catch (_) {
+        await Future<void>.delayed(const Duration(milliseconds: 180));
+        return;
+      }
+
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+    }
+
+    try {
+      await FlutterOverlayWindow.closeOverlay();
+    } catch (_) {
+      return;
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 350));
   }
 
   // Android 오버레이 권한이 없으면 사용자에게 권한 설정 화면으로 갈지 물어본다.
