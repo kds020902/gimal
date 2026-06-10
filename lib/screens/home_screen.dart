@@ -31,6 +31,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   static const int _landscapeOverlayPanelHeight = 300;
 
   StreamSubscription<dynamic>? _overlaySubscription;
+  bool _openingOverlay = false;
+
   @override
   void initState() {
     super.initState();
@@ -73,10 +75,16 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   // 오버레이 권한을 확인한 뒤 작은 오버레이 아이콘을 띄우고 홈 화면으로 이동한다.
   Future<void> _startOverlay() async {
-    if (!await _checkOverlayPermission()) return;
+    if (_openingOverlay) return;
+    _openingOverlay = true;
 
-    await _openOverlayWindow(expanded: false, closeBeforeOpen: true);
-    await _homeChannel.invokeMethod('goHome');
+    try {
+      if (!await _checkOverlayPermission()) return;
+      await _openOverlayWindow(expanded: false, closeBeforeOpen: true);
+      await _homeChannel.invokeMethod('goHome');
+    } finally {
+      _openingOverlay = false;
+    }
   }
 
   // 실제 오버레이 창을 여는 공통 함수이다.

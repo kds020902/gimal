@@ -137,6 +137,7 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
   // "앱으로" 버튼을 눌렀을 때 웹뷰를 닫고 메인 앱을 앞으로 가져온 뒤 오버레이를 종료한다.
   Future<void> _returnToApp() async {
     FocusManager.instance.primaryFocus?.unfocus();
+    await AppStateStore.saveOverlayExpanded(false);
     _isClosing = true;
     _webOpen = false;
     _activeMode = null;
