@@ -25,13 +25,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     'com.example.gimal/home',
   );
 
-  // 작은 플로팅 아이콘 오버레이의 크기이다.
-  static const int _launcherSize = 96;
   static const int _portraitOverlayPanelHeight = 380;
   static const int _landscapeOverlayPanelHeight = 300;
 
   StreamSubscription<dynamic>? _overlaySubscription;
-  bool _openingOverlay = false;
 
   @override
   void initState() {
@@ -73,41 +70,29 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     globalMemos = memos;
   }
 
-  // 오버레이 권한을 확인한 뒤 작은 오버레이 아이콘을 띄우고 홈 화면으로 이동한다.
+  // 오버레이 권한을 확인한 뒤 상단 위젯 오버레이를 바로 띄우고 홈 화면으로 이동한다.
   Future<void> _startOverlay() async {
-    if (_openingOverlay) return;
-    _openingOverlay = true;
-
-    try {
-      if (!await _checkOverlayPermission()) return;
-      await _openOverlayWindow(expanded: false, closeBeforeOpen: true);
-      await _homeChannel.invokeMethod('goHome');
-    } finally {
-      _openingOverlay = false;
-    }
+    if (!await _checkOverlayPermission()) return;
+    await _openOverlayWindow(closeBeforeOpen: true);
+    await _homeChannel.invokeMethod('goHome');
   }
 
   // 실제 오버레이 창을 여는 공통 함수이다.
-  Future<void> _openOverlayWindow({
-    required bool expanded,
-    bool closeBeforeOpen = false,
-  }) async {
+  Future<void> _openOverlayWindow({bool closeBeforeOpen = false}) async {
     if (closeBeforeOpen) {
       await _closeOverlayIfActive();
     }
 
-    await AppStateStore.saveOverlayExpanded(expanded);
-
     await FlutterOverlayWindow.showOverlay(
-      enableDrag: !expanded,
+      enableDrag: false,
       alignment: OverlayAlignment.topLeft,
       overlayTitle: 'gimal',
-      overlayContent: expanded ? 'Overlay menu' : 'Quick overlay menu',
+      overlayContent: 'Overlay menu',
       flag: OverlayFlag.focusPointer,
       positionGravity: PositionGravity.none,
-      startPosition: expanded ? OverlayPosition(0, 0) : _launcherCenterPosition(),
-      width: expanded ? WindowSize.matchParent : _launcherSize,
-      height: expanded ? _expandedOverlayHeight() : _launcherSize,
+      startPosition: OverlayPosition(0, 0),
+      width: WindowSize.matchParent,
+      height: _expandedOverlayHeight(),
     );
 
     await Future<void>.delayed(const Duration(milliseconds: 180));
@@ -124,13 +109,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     return size.width > size.height
         ? _landscapeOverlayPanelHeight
         : _portraitOverlayPanelHeight;
-  }
-
-  OverlayPosition _launcherCenterPosition() {
-    final size = MediaQuery.sizeOf(context);
-    final x = (size.width - _launcherSize) / 2;
-    final y = (size.height - _launcherSize) / 2;
-    return OverlayPosition(x < 0 ? 0.0 : x, y < 0 ? 0.0 : y);
   }
 
   // 이미 떠 있는 오버레이가 있으면 먼저 닫아 이전 투명 창이 남지 않게 한다.

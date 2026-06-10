@@ -6,7 +6,7 @@ import 'package:flutter_overlay_window/flutter_overlay_window.dart';
 import 'package:gimal/services/app_state_store.dart';
 
 // 실제 오버레이 화면을 구성하는 파일이다.
-// 작은 플로팅 아이콘, 상단 버튼 바, URL/북마크/메모/메뉴 패널과 오버레이 WebView를 제어한다.
+// 상단 버튼 바, URL/북마크/메모/메뉴 패널과 오버레이 WebView를 제어한다.
 
 // 상단 버튼에서 어떤 패널을 열지 구분하기 위한 값이다.
 enum OverlayMode { url, bookmarks, memos, menu }
@@ -37,12 +37,6 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
     'com.example.gimal/utils',
   );
 
-  // 접혀 있을 때 보이는 플로팅 아이콘 크기이다.
-  static const int _launcherWindowSize = 96;
-  static const double _launcherIconSize = 84;
-  static const int _portraitOverlayPanelHeight = 380;
-  static const int _landscapeOverlayPanelHeight = 300;
-
   // URL 검색창과 메모 입력창에서 사용하는 컨트롤러이다.
   final TextEditingController _searchController = TextEditingController();
   final TextEditingController _memoTitleController = TextEditingController();
@@ -53,11 +47,9 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
   OverlayMode? _activeMode;
   int? _memoEditIndex;
   bool _stateLoaded = false;
-  bool _expanded = false;
   bool _webOpen = false;
   bool _isDark = false;
   bool _isClosing = false;
-  bool _isChangingSize = false;
   bool _memoEditorOpen = false;
   List<Map<String, String>> _bookmarks = [];
   List<Map<String, String>> _memos = [];
@@ -92,9 +84,9 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
   @override
   void didChangeMetrics() {
     // 화면 회전처럼 크기가 바뀌면 웹뷰 오버레이 위치만 다시 맞춘다.
-    if (_isClosing || !_expanded) return;
+    if (_isClosing) return;
     WidgetsBinding.instance.addPostFrameCallback((_) async {
-      if (_isClosing || !mounted || !_expanded) return;
+      if (_isClosing || !mounted) return;
       await _updateWebOverlayBounds();
     });
   }
@@ -108,13 +100,11 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
         : _bookmarks;
     var memos = _memos;
     var isDark = _isDark;
-    var expanded = _expanded;
 
     try {
       bookmarks = await AppStateStore.loadBookmarks();
       memos = await AppStateStore.loadMemos();
       isDark = await AppStateStore.loadDarkMode();
-      expanded = await AppStateStore.loadOverlayExpanded();
     } catch (error) {
       debugPrint('load overlay state failed: $error');
     }
@@ -124,20 +114,13 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
       _bookmarks = bookmarks;
       _memos = memos;
       _isDark = isDark;
-      _expanded = expanded;
       _stateLoaded = true;
     });
-  }
-
-  // 작은 플로팅 아이콘을 눌렀을 때 전체 오버레이 메뉴를 여는 함수이다.
-  Future<void> _openOverlayUi() async {
-    await _changeOverlaySize(expanded: true);
   }
 
   // "앱으로" 버튼을 눌렀을 때 웹뷰를 닫고 메인 앱을 앞으로 가져온 뒤 오버레이를 종료한다.
   Future<void> _returnToApp() async {
     FocusManager.instance.primaryFocus?.unfocus();
-    await AppStateStore.saveOverlayExpanded(false);
     _isClosing = true;
     _webOpen = false;
     _activeMode = null;
@@ -160,84 +143,21 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
     }
   }
 
-  // "닫기" 버튼을 눌렀을 때 큰 오버레이를 접고 다시 작은 아이콘만 보이게 한다.
-  Future<void> _collapseToLauncher() async {
+  // "닫기" 버튼을 눌렀을 때 오버레이 창을 완전히 닫는다.
+  Future<void> _closeOverlayOnly() async {
     FocusManager.instance.primaryFocus?.unfocus();
-    await _closeNativeWeb();
-    await _changeOverlaySize(expanded: false);
-  }
-
-  // 작은 아이콘과 상단 탭 오버레이를 같은 창 안에서 크기만 바꿔 전환한다.
-  Future<void> _changeOverlaySize({required bool expanded}) async {
-    if (_isClosing || _isChangingSize) return;
-    _isChangingSize = true;
-
-    final previousExpanded = _expanded;
-    final previousWebOpen = _webOpen;
-    final previousMode = _activeMode;
-    final previousMemoEditorOpen = _memoEditorOpen;
-    final previousMemoEditIndex = _memoEditIndex;
+    _isClosing = true;
+    _webOpen = false;
+    _activeMode = null;
 
     try {
-      await AppStateStore.saveOverlayExpanded(expanded);
-      if (!mounted || _isClosing) return;
-
-      setState(() {
-        _expanded = expanded;
-        _webOpen = false;
-        _activeMode = null;
-        _memoEditorOpen = false;
-        _memoEditIndex = null;
-      });
-
+      await _closeNativeWeb();
       await WidgetsBinding.instance.endOfFrame;
-
-      if (expanded) {
-        await FlutterOverlayWindow.moveOverlay(OverlayPosition(0, 0));
-        await FlutterOverlayWindow.resizeOverlay(
-          WindowSize.matchParent,
-          _expandedOverlayHeight(),
-          false,
-        );
-        await FlutterOverlayWindow.moveOverlay(OverlayPosition(0, 0));
-      } else {
-        await FlutterOverlayWindow.resizeOverlay(
-          _launcherWindowSize,
-          _launcherWindowSize,
-          true,
-        );
-        await FlutterOverlayWindow.moveOverlay(_launcherCenterPosition());
-      }
+      await FlutterOverlayWindow.closeOverlay();
     } catch (error) {
-      debugPrint('changeOverlaySize failed: $error');
-      await AppStateStore.saveOverlayExpanded(previousExpanded);
-      if (mounted && !_isClosing) {
-        setState(() {
-          _expanded = previousExpanded;
-          _webOpen = previousWebOpen;
-          _activeMode = previousMode;
-          _memoEditorOpen = previousMemoEditorOpen;
-          _memoEditIndex = previousMemoEditIndex;
-        });
-      }
-    } finally {
-      _isChangingSize = false;
+      _isClosing = false;
+      debugPrint('closeOverlay failed: $error');
     }
-  }
-
-  // 화면 방향에 따라 상단 탭 오버레이가 차지할 높이를 정한다.
-  int _expandedOverlayHeight() {
-    final size = MediaQuery.sizeOf(context);
-    return size.width > size.height
-        ? _landscapeOverlayPanelHeight
-        : _portraitOverlayPanelHeight;
-  }
-
-  OverlayPosition _launcherCenterPosition() {
-    final size = MediaQuery.sizeOf(context);
-    final x = (size.width - _launcherWindowSize) / 2;
-    final y = (size.height - _launcherWindowSize) / 2;
-    return OverlayPosition(x < 0 ? 0.0 : x, y < 0 ? 0.0 : y);
   }
 
   // 오버레이에서 다크모드를 바꾸고 저장소에 저장한다.
@@ -505,14 +425,7 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
       );
     }
 
-    // 아이콘 화면과 펼친 화면을 둘 다 유지하고, Offstage로 보이기만 바꾼다.
-    return Stack(
-      fit: StackFit.expand,
-      children: [
-        Offstage(offstage: _expanded, child: Center(child: _buildLauncherIcon())),
-        Offstage(offstage: !_expanded, child: _buildExpandedOverlay()),
-      ],
-    );
+    return _buildExpandedOverlay();
   }
 
   // 펼쳐진 오버레이에서는 배경을 깔지 않고 상단 탭 패널만 고정해서 보여준다.
@@ -533,31 +446,6 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
             child: _buildTopOverlayPanel(isLandscape: isLandscape),
           ),
         ),
-      ),
-    );
-  }
-
-  // 접혀 있을 때 사용자가 누를 수 있는 동그란 플로팅 아이콘이다.
-  Widget _buildLauncherIcon() {
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTap: _openOverlayUi,
-      child: Container(
-        width: _launcherIconSize,
-        height: _launcherIconSize,
-        decoration: BoxDecoration(
-          color: _accentColor,
-          shape: BoxShape.circle,
-          border: Border.all(color: Colors.white, width: 2),
-          boxShadow: const [
-            BoxShadow(
-              color: Color(0x66000000),
-              blurRadius: 16,
-              offset: Offset(0, 6),
-            ),
-          ],
-        ),
-        child: const Icon(Icons.layers, color: Colors.white, size: 36),
       ),
     );
   }
@@ -719,7 +607,7 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
           child: _menuActionButton(
             icon: Icons.keyboard_arrow_up,
             label: '닫기',
-            onPressed: _collapseToLauncher,
+            onPressed: _closeOverlayOnly,
           ),
         ),
         const SizedBox(width: 8),
