@@ -346,14 +346,12 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
   // Android WebView 오버레이에 넘겨줄 x, y, width, height 값을 만든다.
   Map<String, int> _webBounds() {
     final media = MediaQuery.of(context);
-    final isLandscape = _isLandscapeScreen();
-    final sideMargin = isLandscape ? 10 : 8;
-    final top = (_measuredPanelBottom() ?? _webTopOffset()) + 8;
+    final top = _measuredPanelBottom() ?? _webTopOffset();
 
     return {
-      'x': sideMargin,
+      'x': 0,
       'y': top.ceil(),
-      'width': (media.size.width - sideMargin * 2).ceil(),
+      'width': media.size.width.ceil(),
       'height': -1,
     };
   }

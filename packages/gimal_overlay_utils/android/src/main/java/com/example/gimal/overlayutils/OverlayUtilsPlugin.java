@@ -218,8 +218,7 @@ public final class OverlayUtilsPlugin
 
   private int remainingDisplayHeight(int topPx) {
     int displayHeight = context.getResources().getDisplayMetrics().heightPixels;
-    int bottomMargin = dp(14);
-    return Math.max(dp(120), displayHeight - topPx - bottomMargin);
+    return Math.max(dp(120), displayHeight - topPx);
   }
 
   private int overlayType() {
