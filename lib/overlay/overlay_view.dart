@@ -37,8 +37,8 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
     'com.example.gimal/utils',
   );
 
-  static const int _launcherWindowSize = 96;
-  static const double _launcherIconSize = 84;
+  static const int _launcherWindowSize = 48;
+  static const double _launcherIconSize = 42;
   static const int _portraitOverlayPanelHeight = 600;
   static const int _landscapeOverlayPanelHeight = 500;
 
@@ -484,14 +484,13 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
     final isLandscape = _isLandscapeScreen();
     var height = media.padding.top + 8;
     height += _mainWidgetHeight(isLandscape);
-    height += 6;
 
     return height.ceil();
   }
 
   int _webHeight() {
     final media = MediaQuery.of(context);
-    final height = media.size.height - _webTopOffset() - media.padding.bottom;
+    final height = media.size.height - _webTopOffset();
     return height.clamp(120.0, media.size.height).ceil();
   }
 
@@ -617,16 +616,16 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
         decoration: BoxDecoration(
           color: _accentColor,
           shape: BoxShape.circle,
-          border: Border.all(color: Colors.white, width: 2),
+          border: Border.all(color: Colors.white, width: 1),
           boxShadow: const [
             BoxShadow(
               color: Color(0x66000000),
-              blurRadius: 16,
-              offset: Offset(0, 6),
+              blurRadius: 8,
+              offset: Offset(0, 3),
             ),
           ],
         ),
-        child: const Icon(Icons.layers, color: Colors.white, size: 36),
+        child: const Icon(Icons.layers, color: Colors.white, size: 18),
       ),
     );
   }
