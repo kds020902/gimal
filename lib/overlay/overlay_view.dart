@@ -61,6 +61,7 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
   bool _isClosing = false;
   bool _isCollapsed = false;
   bool _isChangingSize = false;
+  bool _isUpdatingWebBounds = false;
   bool _lastLandscape = false;
   bool _memoEditorOpen = false;
   List<Map<String, String>> _bookmarks = [];
@@ -445,16 +446,21 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
 
   // 웹뷰가 열려 있을 때 상단 패널 높이에 맞춰 웹뷰 위치와 크기를 다시 계산한다.
   Future<void> _updateWebOverlayBounds() async {
-    if (_isClosing || !_webOpen || !mounted) return;
-
-    await WidgetsBinding.instance.endOfFrame;
-    if (_isClosing || !_webOpen || !mounted) return;
+    if (_isClosing || !_webOpen || !mounted || _isUpdatingWebBounds) return;
+    _isUpdatingWebBounds = true;
 
     try {
+      await _resizeToExpandedOverlay();
+      await FlutterOverlayWindow.moveOverlay(OverlayPosition(0, 0));
+      await WidgetsBinding.instance.endOfFrame;
+      await WidgetsBinding.instance.endOfFrame;
+      if (_isClosing || !_webOpen || !mounted) return;
       await _resizeOverlayForWeb();
       await _utilsChannel.invokeMethod('updateWebOverlayBounds', _webBounds());
     } catch (error) {
       debugPrint('updateWebOverlayBounds failed: $error');
+    } finally {
+      _isUpdatingWebBounds = false;
     }
   }
 
