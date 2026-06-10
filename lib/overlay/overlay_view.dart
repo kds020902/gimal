@@ -47,6 +47,7 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
   final TextEditingController _memoTitleController = TextEditingController();
   final TextEditingController _memoContentController = TextEditingController();
   final GlobalKey _panelKey = GlobalKey();
+  final GlobalKey _webHeaderKey = GlobalKey();
   final ScrollController _bookmarkScrollController = ScrollController();
   final ScrollController _memoScrollController = ScrollController();
   OverlayPosition? _launcherOverlayPosition;
@@ -444,18 +445,25 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
   // Android WebView 오버레이에 넘겨줄 x, y, width, height 값을 만든다.
   Map<String, int> _webBounds() {
     final media = MediaQuery.of(context);
-    final top = _measuredPanelBottom() ?? _webTopOffset();
+    final measuredTop =
+        _measuredBottom(_webHeaderKey) ?? _measuredBottom(_panelKey);
+    final minimumTop = _webTopOffset().toDouble();
+    var top = minimumTop;
+
+    if (measuredTop != null && measuredTop > top) {
+      top = measuredTop;
+    }
 
     return {
       'x': 0,
-      'y': top.ceil(),
+      'y': (top + 6).ceil(),
       'width': media.size.width.ceil(),
       'height': -1,
     };
   }
 
-  double? _measuredPanelBottom() {
-    final context = _panelKey.currentContext;
+  double? _measuredBottom(GlobalKey key) {
+    final context = key.currentContext;
     if (context == null) return null;
 
     final renderObject = context.findRenderObject();
@@ -650,6 +658,7 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
 
   Widget _buildWebHeaderPanel() {
     return Container(
+      key: _webHeaderKey,
       width: double.infinity,
       decoration: BoxDecoration(
         color: _panelColor,
