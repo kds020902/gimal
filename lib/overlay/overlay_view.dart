@@ -192,6 +192,7 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
       await WidgetsBinding.instance.endOfFrame;
 
       if (expanded) {
+        await FlutterOverlayWindow.moveOverlay(OverlayPosition(0, 0));
         await FlutterOverlayWindow.resizeOverlay(
           WindowSize.matchParent,
           _expandedOverlayHeight(),
@@ -277,12 +278,7 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
     try {
       setState(() {
         _webOpen = true;
-        _activeMode = null;
-        _memoEditorOpen = false;
-        _memoEditIndex = null;
         _searchController.text = url;
-        _memoTitleController.clear();
-        _memoContentController.clear();
       });
 
       await _utilsChannel.invokeMethod('openWebOverlay', {

@@ -92,12 +92,12 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
     await FlutterOverlayWindow.showOverlay(
       enableDrag: !expanded,
-      alignment: expanded ? OverlayAlignment.topLeft : OverlayAlignment.center,
+      alignment: OverlayAlignment.topLeft,
       overlayTitle: 'gimal',
       overlayContent: expanded ? 'Overlay menu' : 'Quick overlay menu',
       flag: OverlayFlag.focusPointer,
       positionGravity: PositionGravity.none,
-      startPosition: expanded ? OverlayPosition(0, 0) : null,
+      startPosition: expanded ? OverlayPosition(0, 0) : _launcherCenterPosition(),
       width: expanded ? WindowSize.matchParent : _launcherSize,
       height: expanded ? _expandedOverlayHeight() : _launcherSize,
     );
@@ -116,6 +116,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     return size.width > size.height
         ? _landscapeOverlayPanelHeight
         : _portraitOverlayPanelHeight;
+  }
+
+  OverlayPosition _launcherCenterPosition() {
+    final size = MediaQuery.sizeOf(context);
+    final x = (size.width - _launcherSize) / 2;
+    final y = (size.height - _launcherSize) / 2;
+    return OverlayPosition(x < 0 ? 0.0 : x, y < 0 ? 0.0 : y);
   }
 
   // 이미 떠 있는 오버레이가 있으면 먼저 닫아 이전 투명 창이 남지 않게 한다.
