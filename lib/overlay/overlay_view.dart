@@ -47,6 +47,8 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
   final TextEditingController _memoTitleController = TextEditingController();
   final TextEditingController _memoContentController = TextEditingController();
   final GlobalKey _panelKey = GlobalKey();
+  final ScrollController _bookmarkScrollController = ScrollController();
+  final ScrollController _memoScrollController = ScrollController();
   OverlayPosition? _launcherOverlayPosition;
   StreamSubscription<dynamic>? _overlaySubscription;
 
@@ -71,8 +73,8 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
 
     // 메인 앱이나 다른 화면에서 데이터가 바뀌면 오버레이도 새 데이터를 다시 읽는다.
     _overlaySubscription = AppStateStore.stateEvents.listen((event) {
-      if (_isClosing) return;
       if (event == AppStateStore.stateUpdatedEvent) {
+        _activateOverlayWindowIfNeeded();
         _loadState();
       }
     });
@@ -88,7 +90,22 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
     _searchController.dispose();
     _memoTitleController.dispose();
     _memoContentController.dispose();
+    _bookmarkScrollController.dispose();
+    _memoScrollController.dispose();
     super.dispose();
+  }
+
+  // 앱으로 돌아갔다가 다시 오버레이를 켤 때 남아 있을 수 있는 "닫히는 중" 상태를 초기화한다.
+  void _activateOverlayWindowIfNeeded() {
+    if (!_isClosing) return;
+    _isClosing = false;
+    _isChangingSize = false;
+    _isCollapsed = false;
+    _webOpen = false;
+    _activeMode = null;
+    _memoEditorOpen = false;
+    _memoEditIndex = null;
+    _launcherOverlayPosition = null;
   }
 
   @override
@@ -456,7 +473,7 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
     var height = media.padding.top + 8 + (isLandscape ? 54 : 58);
 
     if (_webOpen) {
-      height += 1 + 58;
+      height += 6 + 58;
     }
 
     if (_activeMode != null) {
@@ -545,8 +562,21 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
               0,
             ),
             child: ConstrainedBox(
+              key: _panelKey,
               constraints: BoxConstraints(maxHeight: maxPanelHeight),
-              child: _buildTopOverlayPanel(isLandscape: isLandscape),
+              child: SingleChildScrollView(
+                padding: EdgeInsets.zero,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _buildTopOverlayPanel(isLandscape: isLandscape),
+                    if (_webOpen) ...[
+                      const SizedBox(height: 6),
+                      _buildWebHeaderPanel(),
+                    ],
+                  ],
+                ),
+              ),
             ),
           ),
         ),
@@ -591,33 +621,44 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
     final mutedColor = _mutedColor;
 
     return Container(
-      key: _panelKey,
       width: double.infinity,
       decoration: _panelDecoration,
-      child: SingleChildScrollView(
-        padding: EdgeInsets.zero,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            _buildButtonBar(isLandscape: isLandscape),
-            if (_webOpen) ...[
-              Divider(height: 1, color: _borderColor),
-              _buildWebControlBar(),
-            ],
-            if (_activeMode != null) ...[
-              Divider(height: 1, color: _borderColor),
-              Padding(
-                padding: EdgeInsets.all(isLandscape ? 8 : 10),
-                child: _buildActivePanel(
-                  textColor: textColor,
-                  mutedColor: mutedColor,
-                  isLandscape: isLandscape,
-                ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _buildButtonBar(isLandscape: isLandscape),
+          if (_activeMode != null) ...[
+            Divider(height: 1, color: _borderColor),
+            Padding(
+              padding: EdgeInsets.all(isLandscape ? 8 : 10),
+              child: _buildActivePanel(
+                textColor: textColor,
+                mutedColor: mutedColor,
+                isLandscape: isLandscape,
               ),
-            ],
+            ),
           ],
-        ),
+        ],
       ),
+    );
+  }
+
+  Widget _buildWebHeaderPanel() {
+    return Container(
+      width: double.infinity,
+      decoration: BoxDecoration(
+        color: _panelColor,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
+        border: Border.all(color: _borderColor),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x33000000),
+            blurRadius: 16,
+            offset: Offset(0, 6),
+          ),
+        ],
+      ),
+      child: _buildWebControlBar(),
     );
   }
 
@@ -887,76 +928,81 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
 
     return SizedBox(
       height: compact ? 68 : 188,
-      child: ListView.builder(
-        scrollDirection: compact ? Axis.horizontal : Axis.vertical,
-        itemCount: _bookmarks.length,
-        itemBuilder: (context, index) {
-          final item = _bookmarks[index];
-          final title = item['title']?.trim().isNotEmpty == true
-              ? item['title']!.trim()
-              : '북마크';
-          final url = item['url']?.trim().isNotEmpty == true
-              ? item['url']!.trim()
-              : title;
+      child: Scrollbar(
+        controller: _bookmarkScrollController,
+        thumbVisibility: true,
+        child: ListView.builder(
+          controller: _bookmarkScrollController,
+          scrollDirection: compact ? Axis.horizontal : Axis.vertical,
+          itemCount: _bookmarks.length,
+          itemBuilder: (context, index) {
+            final item = _bookmarks[index];
+            final title = item['title']?.trim().isNotEmpty == true
+                ? item['title']!.trim()
+                : '북마크';
+            final url = item['url']?.trim().isNotEmpty == true
+                ? item['url']!.trim()
+                : title;
 
-          return SizedBox(
-            width: compact ? 240 : null,
-            child: Padding(
-              padding: EdgeInsets.only(
-                right: compact ? 8 : 0,
-                bottom: compact ? 0 : 8,
-              ),
-              child: Material(
-                color: _surfaceColor,
-                borderRadius: BorderRadius.circular(10),
-                child: InkWell(
+            return SizedBox(
+              width: compact ? 240 : null,
+              child: Padding(
+                padding: EdgeInsets.only(
+                  right: compact ? 8 : 0,
+                  bottom: compact ? 0 : 8,
+                ),
+                child: Material(
+                  color: _surfaceColor,
                   borderRadius: BorderRadius.circular(10),
-                  onTap: () => _openWeb(url),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 10,
-                      vertical: 8,
-                    ),
-                    child: Row(
-                      children: [
-                        const Icon(
-                          Icons.open_in_new,
-                          color: Colors.amber,
-                          size: 20,
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                title,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  color: textColor,
-                                  fontWeight: FontWeight.w700,
-                                ),
-                              ),
-                              if (!compact)
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(10),
+                    onTap: () => _openWeb(url),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 8,
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(
+                            Icons.open_in_new,
+                            color: Colors.amber,
+                            size: 20,
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
                                 Text(
-                                  url,
+                                  title,
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(color: mutedColor),
+                                  style: TextStyle(
+                                    color: textColor,
+                                    fontWeight: FontWeight.w700,
+                                  ),
                                 ),
-                            ],
+                                if (!compact)
+                                  Text(
+                                    url,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(color: mutedColor),
+                                  ),
+                              ],
+                            ),
                           ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
                   ),
                 ),
               ),
-            ),
-          );
-        },
+            );
+          },
+        ),
       ),
     );
   }
@@ -972,37 +1018,42 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
 
     return SizedBox(
       height: _memoPanelHeight(compact),
-      child: ListView.builder(
-        scrollDirection: compact ? Axis.horizontal : Axis.vertical,
-        itemCount: _memos.length + 1,
-        itemBuilder: (context, index) {
-          if (index == 0) {
+      child: Scrollbar(
+        controller: _memoScrollController,
+        thumbVisibility: true,
+        child: ListView.builder(
+          controller: _memoScrollController,
+          scrollDirection: compact ? Axis.horizontal : Axis.vertical,
+          itemCount: _memos.length + 1,
+          itemBuilder: (context, index) {
+            if (index == 0) {
+              return _memoTile(
+                compact: compact,
+                icon: Icons.add,
+                title: '메모 추가',
+                content: _memos.isEmpty ? '저장된 메모가 없습니다.' : '새 메모 작성',
+                onTap: () => _openMemoEditor(),
+              );
+            }
+
+            final memoIndex = index - 1;
+            final memo = _memos[memoIndex];
+            final title = memo['title']?.isNotEmpty == true
+                ? memo['title']!
+                : '메모';
+            final content = memo['content']?.isNotEmpty == true
+                ? memo['content']!
+                : '메모 내용이 없습니다.';
+
             return _memoTile(
               compact: compact,
-              icon: Icons.add,
-              title: '메모 추가',
-              content: _memos.isEmpty ? '저장된 메모가 없습니다.' : '새 메모 작성',
-              onTap: () => _openMemoEditor(),
+              icon: Icons.note,
+              title: title,
+              content: content,
+              onTap: () => _openMemoEditor(index: memoIndex),
             );
-          }
-
-          final memoIndex = index - 1;
-          final memo = _memos[memoIndex];
-          final title = memo['title']?.isNotEmpty == true
-              ? memo['title']!
-              : '메모';
-          final content = memo['content']?.isNotEmpty == true
-              ? memo['content']!
-              : '메모 내용이 없습니다.';
-
-          return _memoTile(
-            compact: compact,
-            icon: Icons.note,
-            title: title,
-            content: content,
-            onTap: () => _openMemoEditor(index: memoIndex),
-          );
-        },
+          },
+        ),
       ),
     );
   }
