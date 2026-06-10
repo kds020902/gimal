@@ -430,14 +430,15 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
   // 웹뷰가 열려 있을 때 상단 패널 높이에 맞춰 웹뷰 위치와 크기를 다시 계산한다.
   Future<void> _updateWebOverlayBounds() async {
     if (_isClosing || !_webOpen || !mounted) return;
-    WidgetsBinding.instance.addPostFrameCallback((_) async {
-      if (_isClosing || !_webOpen || !mounted) return;
-      try {
-        await _utilsChannel.invokeMethod('updateWebOverlayBounds', _webBounds());
-      } catch (error) {
-        debugPrint('updateWebOverlayBounds failed: $error');
-      }
-    });
+
+    await WidgetsBinding.instance.endOfFrame;
+    if (_isClosing || !_webOpen || !mounted) return;
+
+    try {
+      await _utilsChannel.invokeMethod('updateWebOverlayBounds', _webBounds());
+    } catch (error) {
+      debugPrint('updateWebOverlayBounds failed: $error');
+    }
   }
 
   // Android WebView 오버레이에 넘겨줄 x, y, width, height 값을 만든다.
@@ -479,7 +480,7 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
     if (_activeMode != null) {
       final panelPadding = isLandscape ? 16 : 20;
       if (_activeMode == OverlayMode.bookmarks) {
-        height += 1 + panelPadding + (isLandscape ? 68 : 188);
+        height += 1 + panelPadding + _bookmarkPanelHeight(isLandscape);
       } else if (_activeMode == OverlayMode.memos) {
         height += 1 + panelPadding + _memoPanelHeight(isLandscape);
       } else {
@@ -496,12 +497,16 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
     return size.width > size.height;
   }
 
+  double _bookmarkPanelHeight(bool compact) {
+    return compact ? 120 : 188;
+  }
+
   // 메모 목록과 메모 편집창은 필요한 높이가 달라서 상태에 따라 높이를 바꾼다.
   double _memoPanelHeight(bool compact) {
     if (_memoEditorOpen) {
       return compact ? 146 : 188;
     }
-    return compact ? 82 : 188;
+    return compact ? 120 : 188;
   }
 
   // URL 패널의 이동 버튼이나 키보드 제출이 눌렸을 때 웹을 연다.
@@ -562,11 +567,11 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
               0,
             ),
             child: ConstrainedBox(
-              key: _panelKey,
               constraints: BoxConstraints(maxHeight: maxPanelHeight),
               child: SingleChildScrollView(
                 padding: EdgeInsets.zero,
                 child: Column(
+                  key: _panelKey,
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     _buildTopOverlayPanel(isLandscape: isLandscape),
@@ -927,13 +932,12 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
     }
 
     return SizedBox(
-      height: compact ? 68 : 188,
+      height: _bookmarkPanelHeight(compact),
       child: Scrollbar(
         controller: _bookmarkScrollController,
         thumbVisibility: true,
         child: ListView.builder(
           controller: _bookmarkScrollController,
-          scrollDirection: compact ? Axis.horizontal : Axis.vertical,
           itemCount: _bookmarks.length,
           itemBuilder: (context, index) {
             final item = _bookmarks[index];
@@ -944,58 +948,52 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
                 ? item['url']!.trim()
                 : title;
 
-            return SizedBox(
-              width: compact ? 240 : null,
-              child: Padding(
-                padding: EdgeInsets.only(
-                  right: compact ? 8 : 0,
-                  bottom: compact ? 0 : 8,
-                ),
-                child: Material(
-                  color: _surfaceColor,
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Material(
+                color: _surfaceColor,
+                borderRadius: BorderRadius.circular(10),
+                child: InkWell(
                   borderRadius: BorderRadius.circular(10),
-                  child: InkWell(
-                    borderRadius: BorderRadius.circular(10),
-                    onTap: () => _openWeb(url),
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 10,
-                        vertical: 8,
-                      ),
-                      child: Row(
-                        children: [
-                          const Icon(
-                            Icons.open_in_new,
-                            color: Colors.amber,
-                            size: 20,
-                          ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
+                  onTap: () => _openWeb(url),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 8,
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(
+                          Icons.open_in_new,
+                          color: Colors.amber,
+                          size: 20,
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                title,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  color: textColor,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                              if (!compact)
                                 Text(
-                                  title,
+                                  url,
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    color: textColor,
-                                    fontWeight: FontWeight.w700,
-                                  ),
+                                  style: TextStyle(color: mutedColor),
                                 ),
-                                if (!compact)
-                                  Text(
-                                    url,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: TextStyle(color: mutedColor),
-                                  ),
-                              ],
-                            ),
+                            ],
                           ),
-                        ],
-                      ),
+                        ),
+                      ],
                     ),
                   ),
                 ),
@@ -1023,7 +1021,6 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
         thumbVisibility: true,
         child: ListView.builder(
           controller: _memoScrollController,
-          scrollDirection: compact ? Axis.horizontal : Axis.vertical,
           itemCount: _memos.length + 1,
           itemBuilder: (context, index) {
             if (index == 0) {
@@ -1122,50 +1119,44 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
     required String content,
     required VoidCallback onTap,
   }) {
-    return SizedBox(
-      width: compact ? 240 : null,
-      child: Padding(
-        padding: EdgeInsets.only(
-          right: compact ? 8 : 0,
-          bottom: compact ? 0 : 8,
-        ),
-        child: Material(
-          color: _surfaceColor,
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Material(
+        color: _surfaceColor,
+        borderRadius: BorderRadius.circular(10),
+        child: InkWell(
           borderRadius: BorderRadius.circular(10),
-          child: InkWell(
-            borderRadius: BorderRadius.circular(10),
-            onTap: onTap,
-            child: Padding(
-              padding: const EdgeInsets.all(10),
-              child: Row(
-                children: [
-                  Icon(icon, color: _accentColor, size: 20),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          title,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: _textColor,
-                            fontWeight: FontWeight.w700,
-                          ),
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.all(10),
+            child: Row(
+              children: [
+                Icon(icon, color: _accentColor, size: 20),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: _textColor,
+                          fontWeight: FontWeight.w700,
                         ),
-                        Text(
-                          content,
-                          maxLines: compact ? 1 : 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(color: _mutedColor, fontSize: 12),
-                        ),
-                      ],
-                    ),
+                      ),
+                      Text(
+                        content,
+                        maxLines: compact ? 1 : 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(color: _mutedColor, fontSize: 12),
+                      ),
+                    ],
                   ),
-                ],
-              ),
+                ),
+              ],
             ),
           ),
         ),
