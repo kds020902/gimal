@@ -46,8 +46,6 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
   final TextEditingController _searchController = TextEditingController();
   final TextEditingController _memoTitleController = TextEditingController();
   final TextEditingController _memoContentController = TextEditingController();
-  final GlobalKey _panelKey = GlobalKey();
-  final GlobalKey _webHeaderKey = GlobalKey();
   final ScrollController _bookmarkScrollController = ScrollController();
   final ScrollController _memoScrollController = ScrollController();
   OverlayPosition? _launcherOverlayPosition;
@@ -304,6 +302,7 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
       await WidgetsBinding.instance.endOfFrame;
       if (_isClosing || !mounted) return;
 
+      await _resizeOverlayForWeb();
       await _utilsChannel.invokeMethod('openWebOverlay', {
         'url': url,
         ..._webBounds(),
@@ -331,6 +330,10 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
     await _closeNativeWeb();
     if (_isClosing || !mounted) return;
     setState(() => _webOpen = false);
+    await WidgetsBinding.instance.endOfFrame;
+    if (!_isClosing && mounted) {
+      await _resizeToExpandedOverlay();
+    }
   }
 
   // Android 쪽에 만들어둔 WebView 창을 제거한다.
@@ -436,71 +439,72 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
     if (_isClosing || !_webOpen || !mounted) return;
 
     try {
+      await _resizeOverlayForWeb();
       await _utilsChannel.invokeMethod('updateWebOverlayBounds', _webBounds());
     } catch (error) {
       debugPrint('updateWebOverlayBounds failed: $error');
     }
   }
 
+  Future<void> _resizeOverlayForWeb() async {
+    await FlutterOverlayWindow.resizeOverlay(
+      WindowSize.matchParent,
+      _webTopOffset(),
+      false,
+    );
+    await FlutterOverlayWindow.moveOverlay(OverlayPosition(0, 0));
+  }
+
   // Android WebView 오버레이에 넘겨줄 x, y, width, height 값을 만든다.
   Map<String, int> _webBounds() {
     final media = MediaQuery.of(context);
-    final measuredTop =
-        _measuredBottom(_webHeaderKey) ?? _measuredBottom(_panelKey);
-    final minimumTop = _webTopOffset().toDouble();
-    var top = minimumTop;
-
-    if (measuredTop != null && measuredTop > top) {
-      top = measuredTop;
-    }
 
     return {
       'x': 0,
-      'y': (top + 6).ceil(),
+      'y': _webTopOffset(),
       'width': media.size.width.ceil(),
       'height': -1,
     };
   }
 
-  double? _measuredBottom(GlobalKey key) {
-    final context = key.currentContext;
-    if (context == null) return null;
-
-    final renderObject = context.findRenderObject();
-    if (renderObject is! RenderBox || !renderObject.hasSize) {
-      return null;
-    }
-
-    final offset = renderObject.localToGlobal(Offset.zero);
-    return offset.dy + renderObject.size.height;
-  }
-
-  // 상단 버튼 바와 열린 패널 높이를 합쳐 웹뷰가 시작할 y 위치를 구한다.
+  // 메인 위젯, 웹뷰 조작 위젯 순서를 기준으로 웹뷰 화면이 시작할 y 위치를 구한다.
   int _webTopOffset() {
     final media = MediaQuery.of(context);
     final isLandscape = _isLandscapeScreen();
-    var height = media.padding.top + 8 + (isLandscape ? 54 : 58);
-
-    if (_webOpen) {
-      height += 6 + 58;
-    }
-
-    if (_activeMode != null) {
-      final panelPadding = isLandscape ? 16 : 20;
-      if (_activeMode == OverlayMode.bookmarks) {
-        height += 1 + panelPadding + _bookmarkPanelHeight(isLandscape);
-      } else if (_activeMode == OverlayMode.memos) {
-        height += 1 + panelPadding + _memoPanelHeight(isLandscape);
-      } else {
-        height += 1 + panelPadding + 42;
-      }
-    }
+    var height = media.padding.top + 8;
+    height += _mainWidgetHeight(isLandscape);
+    height += 6 + _webControlWidgetHeight() + 12;
 
     return height.ceil();
   }
 
+  double _mainWidgetHeight(bool compact) {
+    final buttonBarHeight = compact ? 54.0 : 58.0;
+    var height = buttonBarHeight;
+    if (_activeMode != null) {
+      final panelPadding = compact ? 16.0 : 20.0;
+      height += 1 + panelPadding + _activePanelHeight(compact);
+    }
+    return height;
+  }
+
+  double _activePanelHeight(bool compact) {
+    if (_activeMode == OverlayMode.bookmarks) {
+      return _bookmarkPanelHeight(compact);
+    }
+    if (_activeMode == OverlayMode.memos) {
+      return _memoPanelHeight(compact);
+    }
+    return 42;
+  }
+
+  double _webControlWidgetHeight() {
+    return 58;
+  }
+
   // 현재 화면이 가로 방향인지 세로 방향인지 판단한다.
   bool _isLandscapeScreen() {
+    if (_webOpen) return _lastLandscape;
     final size = MediaQuery.sizeOf(context);
     return size.width > size.height;
   }
@@ -579,7 +583,6 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
               child: SingleChildScrollView(
                 padding: EdgeInsets.zero,
                 child: Column(
-                  key: _panelKey,
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     _buildTopOverlayPanel(isLandscape: isLandscape),
@@ -658,7 +661,6 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
 
   Widget _buildWebHeaderPanel() {
     return Container(
-      key: _webHeaderKey,
       width: double.infinity,
       decoration: BoxDecoration(
         color: _panelColor,
