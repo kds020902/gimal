@@ -46,6 +46,7 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
   final TextEditingController _searchController = TextEditingController();
   final TextEditingController _memoTitleController = TextEditingController();
   final TextEditingController _memoContentController = TextEditingController();
+  final GlobalKey _topPanelKey = GlobalKey();
   final ScrollController _bookmarkScrollController = ScrollController();
   final ScrollController _memoScrollController = ScrollController();
   OverlayPosition? _launcherOverlayPosition;
@@ -480,12 +481,28 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
 
   // 메인 위젯 바로 아래에서 Android WebView 창이 시작하도록 y 위치를 구한다.
   int _webTopOffset() {
+    final measuredBottom = _measuredTopPanelBottom();
+    if (measuredBottom != null) {
+      return measuredBottom.ceil();
+    }
+
     final media = MediaQuery.of(context);
     final isLandscape = _isLandscapeScreen();
     var height = media.padding.top + 8;
     height += _mainWidgetHeight(isLandscape);
 
     return height.ceil();
+  }
+
+  double? _measuredTopPanelBottom() {
+    final currentContext = _topPanelKey.currentContext;
+    if (currentContext == null) return null;
+
+    final renderObject = currentContext.findRenderObject();
+    if (renderObject is! RenderBox || !renderObject.hasSize) return null;
+
+    final offset = renderObject.localToGlobal(Offset.zero);
+    return offset.dy + renderObject.size.height;
   }
 
   double _mainWidgetHeight(bool compact) {
@@ -637,6 +654,7 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
     final mutedColor = _mutedColor;
 
     return Container(
+      key: _topPanelKey,
       width: double.infinity,
       decoration: _panelDecoration,
       child: Column(
