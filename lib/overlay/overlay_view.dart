@@ -5,6 +5,9 @@ import 'package:flutter/services.dart';
 import 'package:flutter_overlay_window/flutter_overlay_window.dart';
 import 'package:gimal/services/app_state_store.dart';
 import 'package:webview_flutter/webview_flutter.dart';
+import 'package:webview_flutter_android/webview_flutter_android.dart';
+import 'package:webview_flutter_platform_interface/webview_flutter_platform_interface.dart'
+    as webview_platform;
 
 // 실제 오버레이 화면을 구성하는 파일이다.
 // 상단 버튼 바, URL/북마크/메모/메뉴 패널과 오버레이 WebView를 제어한다.
@@ -567,7 +570,7 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
                     const SizedBox(height: 6),
                     _buildWebControlBar(),
                     const SizedBox(height: 6),
-                    Expanded(child: WebViewWidget(controller: webController)),
+                    Expanded(child: _buildWebView(webController)),
                   ],
                 )
               : Align(
@@ -588,6 +591,24 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
         ),
       ),
     );
+  }
+
+  // 실제 휴대폰 오버레이에서 WebView가 안 보이는 경우가 있어 Android는 Hybrid Composition으로 표시한다.
+  Widget _buildWebView(WebViewController controller) {
+    webview_platform.PlatformWebViewWidgetCreationParams params =
+        webview_platform.PlatformWebViewWidgetCreationParams(
+          controller: controller.platform,
+        );
+
+    if (webview_platform.WebViewPlatform.instance is AndroidWebViewPlatform) {
+      params =
+          AndroidWebViewWidgetCreationParams.fromPlatformWebViewWidgetCreationParams(
+            params,
+            displayWithHybridComposition: true,
+          );
+    }
+
+    return WebViewWidget.fromPlatformCreationParams(params: params);
   }
 
   Widget _buildWebControlBar() {
