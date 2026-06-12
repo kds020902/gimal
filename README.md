@@ -20,8 +20,6 @@ Flutter로 만든 오버레이 기반 컨트롤러 앱입니다.
 
 ![앱 메인 메뉴 화면](docs/screenshots/overlay_launcher.png)
 
-## 주요 기능
-
 # 주요 기능
 1. URL 검색 기능
 사용자가 URL을 입력하면 해당 웹페이지로 이동할 수 있습니다.
