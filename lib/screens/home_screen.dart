@@ -25,9 +25,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     'com.example.gimal/home',
   );
 
-  static const int _portraitOverlayPanelHeight = 600;
-  static const int _landscapeOverlayPanelHeight = 500;
-
   StreamSubscription<dynamic>? _overlaySubscription;
 
   @override
@@ -92,7 +89,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       positionGravity: PositionGravity.none,
       startPosition: OverlayPosition(0, 0),
       width: WindowSize.matchParent,
-      height: _expandedOverlayHeight(),
+      height: WindowSize.matchParent,
     );
 
     await Future<void>.delayed(const Duration(milliseconds: 180));
@@ -101,14 +98,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     } catch (_) {
       debugPrint('Overlay state event was skipped.');
     }
-  }
-
-  // 전체 오버레이 대신 상단 패널이 들어갈 만큼만 오버레이 창 높이를 잡는다.
-  int _expandedOverlayHeight() {
-    final size = MediaQuery.sizeOf(context);
-    return size.width > size.height
-        ? _landscapeOverlayPanelHeight
-        : _portraitOverlayPanelHeight;
   }
 
   // 이미 떠 있는 오버레이가 있으면 먼저 닫아 이전 투명 창이 남지 않게 한다.

@@ -40,9 +40,6 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
 
   static const int _launcherWindowSize = 48;
   static const double _launcherIconSize = 42;
-  static const int _portraitOverlayPanelHeight = 600;
-  static const int _landscapeOverlayPanelHeight = 500;
-
   // URL 검색창과 메모 입력창에서 사용하는 컨트롤러이다.
   final TextEditingController _searchController = TextEditingController();
   final TextEditingController _memoTitleController = TextEditingController();
@@ -236,30 +233,20 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
   Future<void> _resizeToExpandedOverlay() async {
     await FlutterOverlayWindow.resizeOverlay(
       WindowSize.matchParent,
-      _expandedOverlayHeight(),
-      false,
-    );
-  }
-
-  Future<void> _resizeToWebOverlay() async {
-    await FlutterOverlayWindow.resizeOverlay(
-      WindowSize.matchParent,
       WindowSize.matchParent,
       false,
     );
     await FlutterOverlayWindow.moveOverlay(OverlayPosition(0, 0));
   }
 
+  Future<void> _resizeToWebOverlay() async {
+    await _resizeToExpandedOverlay();
+  }
+
   Future<void> _moveLauncherOverlay() async {
     final launcherOffset = _launcherOffset ?? _defaultLauncherOffset();
     _launcherOffset = launcherOffset;
     await FlutterOverlayWindow.moveOverlay(_overlayPositionFor(launcherOffset));
-  }
-
-  int _expandedOverlayHeight() {
-    return _lastLandscape
-        ? _landscapeOverlayPanelHeight
-        : _portraitOverlayPanelHeight;
   }
 
   Offset _defaultLauncherOffset() {
@@ -316,16 +303,20 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
 
     try {
       _lastLandscape = _isLandscapeScreen();
-      final controller = _createWebViewController(url);
       setState(() {
         _webOpen = true;
-        _webViewController = controller;
+        _webViewController = null;
         _searchController.text = url;
       });
 
       await WidgetsBinding.instance.endOfFrame;
       if (_isClosing || !mounted) return;
       await _resizeToWebOverlay();
+      await WidgetsBinding.instance.endOfFrame;
+      if (_isClosing || !mounted) return;
+
+      final controller = _createWebViewController(url);
+      setState(() => _webViewController = controller);
     } catch (error) {
       if (mounted) {
         setState(() {
@@ -576,12 +567,7 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
                     const SizedBox(height: 6),
                     _buildWebControlBar(),
                     const SizedBox(height: 6),
-                    Expanded(
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(8),
-                        child: WebViewWidget(controller: webController),
-                      ),
-                    ),
+                    Expanded(child: WebViewWidget(controller: webController)),
                   ],
                 )
               : Align(
