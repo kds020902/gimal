@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_overlay_window/flutter_overlay_window.dart';
 import 'package:gimal/services/app_state_store.dart';
+import 'package:webview_flutter/webview_flutter.dart';
 
 // 실제 오버레이 화면을 구성하는 파일이다.
 // 상단 버튼 바, URL/북마크/메모/메뉴 패널과 오버레이 WebView를 제어한다.
@@ -32,7 +33,7 @@ class OverlayView extends StatefulWidget {
 }
 
 class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
-  // Android 네이티브 코드와 통신해서 웹뷰 오버레이, 앱 복귀 같은 기능을 실행한다.
+  // Android 네이티브 코드와 통신해서 메인 앱을 다시 앞으로 가져온다.
   static const MethodChannel _utilsChannel = MethodChannel(
     'com.example.gimal/utils',
   );
@@ -48,6 +49,7 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
   final TextEditingController _memoContentController = TextEditingController();
   final ScrollController _bookmarkScrollController = ScrollController();
   final ScrollController _memoScrollController = ScrollController();
+  WebViewController? _webViewController;
   Offset? _launcherOffset;
   StreamSubscription<dynamic>? _overlaySubscription;
 
@@ -60,10 +62,8 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
   bool _isClosing = false;
   bool _isCollapsed = false;
   bool _isChangingSize = false;
-  bool _isUpdatingWebBounds = false;
   bool _lastLandscape = false;
   bool _memoEditorOpen = false;
-  int? _lastWebTopOffset;
   List<Map<String, String>> _bookmarks = [];
   List<Map<String, String>> _memos = [];
 
@@ -79,8 +79,6 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
         _loadState();
       }
     });
-    _utilsChannel.setMethodCallHandler(_handleUtilsCall);
-
     _loadState();
   }
 
@@ -94,24 +92,7 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
     _memoContentController.dispose();
     _bookmarkScrollController.dispose();
     _memoScrollController.dispose();
-    _utilsChannel.setMethodCallHandler(null);
     super.dispose();
-  }
-
-  Future<void> _handleUtilsCall(MethodCall call) async {
-    if (call.method == 'webOverlayClosed') {
-      await _handleNativeWebClosed();
-    }
-  }
-
-  Future<void> _handleNativeWebClosed() async {
-    if (_isClosing || !mounted) return;
-    setState(() => _webOpen = false);
-    _lastWebTopOffset = null;
-    await WidgetsBinding.instance.endOfFrame;
-    if (!_isClosing && mounted) {
-      await _resizeToExpandedOverlay();
-    }
   }
 
   // 앱으로 돌아갔다가 다시 오버레이를 켤 때 남아 있을 수 있는 "닫히는 중" 상태를 초기화한다.
@@ -125,7 +106,7 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
     _memoEditorOpen = false;
     _memoEditIndex = null;
     _launcherOffset = null;
-    _lastWebTopOffset = null;
+    _webViewController = null;
   }
 
   @override
@@ -139,11 +120,10 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
         return;
       }
       if (_webOpen) {
-        await _updateWebOverlayBounds();
+        await _resizeToWebOverlay();
         return;
       }
       await _resizeToExpandedOverlay();
-      await _updateWebOverlayBounds();
     });
   }
 
@@ -179,10 +159,10 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
     FocusManager.instance.primaryFocus?.unfocus();
     _isClosing = true;
     _webOpen = false;
+    _webViewController = null;
     _activeMode = null;
 
     try {
-      await _closeNativeWeb();
       try {
         await _utilsChannel.invokeMethod('bringToFront');
       } catch (error) {
@@ -199,24 +179,23 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
     }
   }
 
-  // "닫기" 버튼을 누르면 오버레이를 끄지 않고 작은 아이콘 모드로 접는다.
+  // "접기" 버튼을 누르면 오버레이를 끄지 않고 작은 아이콘 모드로 접는다.
   Future<void> _collapseToLauncher() async {
     FocusManager.instance.primaryFocus?.unfocus();
     if (_isClosing || _isChangingSize) return;
     _isChangingSize = true;
 
     try {
-      await _closeNativeWeb();
       if (!mounted || _isClosing) return;
 
       setState(() {
         _isCollapsed = true;
         _webOpen = false;
+        _webViewController = null;
         _activeMode = null;
         _memoEditorOpen = false;
         _memoEditIndex = null;
       });
-      _lastWebTopOffset = null;
 
       await WidgetsBinding.instance.endOfFrame;
       final launcherOffset = _launcherOffset ?? _defaultLauncherOffset();
@@ -243,7 +222,6 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
 
     try {
       setState(() => _isCollapsed = false);
-      _lastWebTopOffset = null;
       await WidgetsBinding.instance.endOfFrame;
       await FlutterOverlayWindow.moveOverlay(OverlayPosition(0, 0));
       await _resizeToExpandedOverlay();
@@ -256,12 +234,20 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
   }
 
   Future<void> _resizeToExpandedOverlay() async {
-    _lastWebTopOffset = null;
     await FlutterOverlayWindow.resizeOverlay(
       WindowSize.matchParent,
       _expandedOverlayHeight(),
       false,
     );
+  }
+
+  Future<void> _resizeToWebOverlay() async {
+    await FlutterOverlayWindow.resizeOverlay(
+      WindowSize.matchParent,
+      WindowSize.matchParent,
+      false,
+    );
+    await FlutterOverlayWindow.moveOverlay(OverlayPosition(0, 0));
   }
 
   Future<void> _moveLauncherOverlay() async {
@@ -290,20 +276,6 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
     return OverlayPosition(offset.dx, offset.dy);
   }
 
-  void _moveLauncherByDrag(DragUpdateDetails details) {
-    if (!_isCollapsed || _isClosing) return;
-
-    final current = _launcherOffset ?? _defaultLauncherOffset();
-    final nextX = current.dx + details.delta.dx;
-    final nextY = current.dy + details.delta.dy;
-    final nextOffset = Offset(nextX < 0 ? 0.0 : nextX, nextY < 0 ? 0.0 : nextY);
-
-    _launcherOffset = nextOffset;
-    unawaited(
-      FlutterOverlayWindow.moveOverlay(_overlayPositionFor(nextOffset)),
-    );
-  }
-
   // 오버레이에서 다크모드를 바꾸고 저장소에 저장한다.
   Future<void> _toggleDarkMode() async {
     if (_isClosing) return;
@@ -330,10 +302,12 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
         _memoContentController.clear();
       }
     });
-    await _updateWebOverlayBounds();
+    if (_webOpen) {
+      await _resizeToWebOverlay();
+    }
   }
 
-  // 검색어, URL, 북마크 주소를 Android WebView 오버레이로 연다.
+  // 검색어, URL, 북마크 주소를 오버레이 안의 Flutter WebView로 연다.
   Future<void> _openWeb(String value) async {
     if (_isClosing) return;
 
@@ -342,47 +316,61 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
 
     try {
       _lastLandscape = _isLandscapeScreen();
+      final controller = _createWebViewController(url);
       setState(() {
         _webOpen = true;
+        _webViewController = controller;
         _searchController.text = url;
       });
 
       await WidgetsBinding.instance.endOfFrame;
       if (_isClosing || !mounted) return;
-
-      final topOffset = _webTopOffset();
-      await _resizeOverlayForWeb(topOffset);
-      await _utilsChannel.invokeMethod('openWebOverlay', {
-        'url': url,
-        ..._webBounds(topOffset),
-      });
-    } on PlatformException catch (error) {
+      await _resizeToWebOverlay();
+    } catch (error) {
       if (mounted) {
-        setState(() => _webOpen = false);
+        setState(() {
+          _webOpen = false;
+          _webViewController = null;
+        });
       }
-      _lastWebTopOffset = null;
-      debugPrint('openWebOverlay failed: ${error.message}');
+      debugPrint('open overlay WebView failed: $error');
     }
   }
 
-  // 웹뷰를 닫을 때 Android WebView 창만 제거하고 Flutter 오버레이 높이를 원래대로 돌린다.
+  WebViewController _createWebViewController(String url) {
+    return WebViewController()
+      ..setJavaScriptMode(JavaScriptMode.unrestricted)
+      ..setNavigationDelegate(
+        NavigationDelegate(
+          onPageFinished: (currentUrl) {
+            if (!mounted || !_webOpen) return;
+            _searchController.text = currentUrl;
+          },
+        ),
+      )
+      ..loadRequest(Uri.parse(url));
+  }
+
+  // 웹뷰를 닫고 오버레이 높이를 다시 상단 위젯 크기로 돌린다.
   Future<void> _closeWeb() async {
-    await _closeNativeWeb();
     if (_isClosing || !mounted) return;
-    setState(() => _webOpen = false);
-    _lastWebTopOffset = null;
+    setState(() {
+      _webOpen = false;
+      _webViewController = null;
+    });
     await WidgetsBinding.instance.endOfFrame;
     if (!_isClosing && mounted) {
       await _resizeToExpandedOverlay();
     }
   }
 
-  // Android 쪽에 만들어둔 WebView 창을 제거한다.
-  Future<void> _closeNativeWeb() async {
-    try {
-      await _utilsChannel.invokeMethod('closeWebOverlay');
-    } catch (error) {
-      debugPrint('closeWebOverlay failed: $error');
+  // WebView가 뒤로 갈 수 있으면 이전 페이지로 이동한다.
+  Future<void> _webGoBack() async {
+    final controller = _webViewController;
+    if (controller == null) return;
+
+    if (await controller.canGoBack()) {
+      await controller.goBack();
     }
   }
 
@@ -399,7 +387,9 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
       _memoTitleController.text = memo?['title'] ?? '';
       _memoContentController.text = memo?['content'] ?? '';
     });
-    await _updateWebOverlayBounds();
+    if (_webOpen) {
+      await _resizeToWebOverlay();
+    }
   }
 
   // 메모 입력창을 닫고 입력값과 수정 위치를 초기화한다.
@@ -415,7 +405,9 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
 
   Future<void> _cancelMemoEditor() async {
     _closeMemoEditor();
-    await _updateWebOverlayBounds();
+    if (_webOpen) {
+      await _resizeToWebOverlay();
+    }
   }
 
   // 메모 입력창의 내용을 새 메모로 추가하거나 기존 메모에 덮어쓴다.
@@ -469,65 +461,12 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
     setState(() => _memos = memos);
     await AppStateStore.saveMemos(memos);
     if (_isClosing || !mounted) return;
-    await _updateWebOverlayBounds();
-  }
-
-  // 웹뷰가 열려 있을 때 상단 패널 높이에 맞춰 웹뷰 위치와 크기를 다시 계산한다.
-  Future<void> _updateWebOverlayBounds() async {
-    if (_isClosing || !_webOpen || !mounted || _isUpdatingWebBounds) return;
-    _isUpdatingWebBounds = true;
-
-    try {
-      await WidgetsBinding.instance.endOfFrame;
-      if (_isClosing || !_webOpen || !mounted) return;
-      final topOffset = _webTopOffset();
-      await _resizeOverlayForWeb(topOffset);
-      await _utilsChannel.invokeMethod(
-        'updateWebOverlayBounds',
-        _webBounds(topOffset),
-      );
-    } catch (error) {
-      debugPrint('updateWebOverlayBounds failed: $error');
-    } finally {
-      _isUpdatingWebBounds = false;
+    if (_webOpen) {
+      await _resizeToWebOverlay();
     }
   }
 
-  Future<void> _resizeOverlayForWeb([int? topOffset]) async {
-    final nextTopOffset = topOffset ?? _webTopOffset();
-    if (_lastWebTopOffset != nextTopOffset) {
-      await FlutterOverlayWindow.resizeOverlay(
-        WindowSize.matchParent,
-        nextTopOffset,
-        false,
-      );
-      _lastWebTopOffset = nextTopOffset;
-    }
-    await FlutterOverlayWindow.moveOverlay(OverlayPosition(0, 0));
-  }
-
-  // Android WebView 오버레이에 넘겨줄 x, y, width, height 값을 만든다.
-  Map<String, int> _webBounds([int? topOffset]) {
-    final media = MediaQuery.of(context);
-
-    return {
-      'x': 0,
-      'y': topOffset ?? _webTopOffset(),
-      'width': media.size.width.ceil(),
-      'height': -1,
-    };
-  }
-
-  // 메인 위젯 바로 아래에서 Android WebView 창이 시작하도록 y 위치를 구한다.
-  int _webTopOffset() {
-    final media = MediaQuery.of(context);
-    final isLandscape = _isLandscapeScreen();
-    var height = media.padding.top + 8;
-    height += _mainWidgetHeight(isLandscape);
-
-    return height.ceil();
-  }
-
+  // 상단 위젯 높이를 계산해서 웹뷰가 열렸을 때 패널이 작아지지 않게 한다.
   double _mainWidgetHeight(bool compact) {
     final buttonBarHeight = compact ? 54.0 : 58.0;
     var height = buttonBarHeight;
@@ -612,30 +551,84 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
     final isLandscape = _isLandscapeScreen();
     _lastLandscape = isLandscape;
     final maxPanelHeight = _maxPanelHeight();
+    final horizontalPadding = isLandscape ? 10.0 : 8.0;
+    final webController = _webViewController;
 
     return SizedBox.expand(
       child: SafeArea(
-        child: Align(
-          alignment: Alignment.topCenter,
-          child: Padding(
-            padding: EdgeInsets.fromLTRB(
-              isLandscape ? 10 : 8,
-              8,
-              isLandscape ? 10 : 8,
-              0,
-            ),
-            child: ConstrainedBox(
-              constraints: BoxConstraints(maxHeight: maxPanelHeight),
-              child: SingleChildScrollView(
-                padding: EdgeInsets.zero,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [_buildTopOverlayPanel(isLandscape: isLandscape)],
+        child: Padding(
+          padding: EdgeInsets.fromLTRB(
+            horizontalPadding,
+            8,
+            horizontalPadding,
+            0,
+          ),
+          child: _webOpen && webController != null
+              ? Column(
+                  children: [
+                    ConstrainedBox(
+                      constraints: BoxConstraints(maxHeight: maxPanelHeight),
+                      child: SingleChildScrollView(
+                        padding: EdgeInsets.zero,
+                        child: _buildTopOverlayPanel(isLandscape: isLandscape),
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    _buildWebControlBar(),
+                    const SizedBox(height: 6),
+                    Expanded(
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(8),
+                        child: WebViewWidget(controller: webController),
+                      ),
+                    ),
+                  ],
+                )
+              : Align(
+                  alignment: Alignment.topCenter,
+                  child: ConstrainedBox(
+                    constraints: BoxConstraints(maxHeight: maxPanelHeight),
+                    child: SingleChildScrollView(
+                      padding: EdgeInsets.zero,
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          _buildTopOverlayPanel(isLandscape: isLandscape),
+                        ],
+                      ),
+                    ),
+                  ),
                 ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildWebControlBar() {
+    return Container(
+      decoration: _panelDecoration,
+      padding: const EdgeInsets.all(8),
+      child: Row(
+        children: [
+          _smallTextButton('X', () => _closeWeb(), danger: true, width: 44),
+          const SizedBox(width: 6),
+          Expanded(
+            child: SizedBox(
+              height: 42,
+              child: TextField(
+                controller: _searchController,
+                style: TextStyle(color: _textColor, fontSize: 14),
+                textInputAction: TextInputAction.go,
+                decoration: _fieldDecoration('URL', Icons.search, _mutedColor),
+                onSubmitted: (_) => _searchUrl(),
               ),
             ),
           ),
-        ),
+          const SizedBox(width: 6),
+          _smallTextButton('이동', () => _searchUrl(), width: 56),
+          const SizedBox(width: 6),
+          _iconAction(Icons.arrow_back, () => _webGoBack()),
+        ],
       ),
     );
   }
@@ -644,7 +637,6 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
       onTap: _expandFromLauncher,
-      onPanUpdate: _moveLauncherByDrag,
       child: Container(
         width: _launcherIconSize,
         height: _launcherIconSize,
@@ -813,7 +805,7 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
     return const SizedBox.shrink();
   }
 
-  // 메뉴 패널에는 앱으로, 닫기, 다크모드 버튼을 배치한다.
+  // 메뉴 패널에는 앱으로, 접기, 다크모드 버튼을 배치한다.
   Widget _buildMenuPanel() {
     return Row(
       children: [
@@ -828,7 +820,7 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
         Expanded(
           child: _menuActionButton(
             icon: Icons.keyboard_arrow_up,
-            label: '닫기',
+            label: '접기',
             onPressed: _collapseToLauncher,
           ),
         ),
