@@ -87,8 +87,7 @@ class _BookmarkScreenState extends State<BookmarkScreen>
     final trimmed = value.trim();
     if (trimmed.isEmpty) return null;
 
-    final text =
-        trimmed.startsWith('http://') || trimmed.startsWith('https://')
+    final text = trimmed.startsWith('http://') || trimmed.startsWith('https://')
         ? trimmed
         : 'https://$trimmed';
     final uri = Uri.tryParse(text);

@@ -1,3 +1,5 @@
+import 'dart:ui';
+
 import 'package:flutter/material.dart';
 import 'package:gimal/overlay/overlay_view.dart';
 import 'package:gimal/screens/home_screen.dart';
@@ -25,6 +27,7 @@ Future<void> main() async {
 @pragma('vm:entry-point')
 void overlayMain() {
   WidgetsFlutterBinding.ensureInitialized();
+  DartPluginRegistrant.ensureInitialized();
   // 오버레이 서비스가 따로 실행될 때 사용하는 시작 함수이다.
   runApp(const OverlayApp());
 }

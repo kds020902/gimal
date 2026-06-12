@@ -82,11 +82,11 @@ class _MemoScreenState extends State<MemoScreen> with WidgetsBindingObserver {
 
     // 메모가 없으면 안내 문구를, 있으면 수정/삭제 버튼이 있는 목록을 보여준다.
     return Scaffold(
-      appBar: AppBar(title: const Text('Memos')),
+      appBar: AppBar(title: const Text('메모')),
       body: globalMemos.isEmpty
           ? Center(
               child: Text(
-                'No memos yet.',
+                '아무런 메모도 적혀있지 않소.',
                 style: TextStyle(color: theme.hintColor),
               ),
             )
@@ -115,7 +115,10 @@ class _MemoScreenState extends State<MemoScreen> with WidgetsBindingObserver {
                         onPressed: () => _editMemo(index),
                       ),
                       IconButton(
-                        icon: const Icon(Icons.delete_outline, color: Colors.red),
+                        icon: const Icon(
+                          Icons.delete_outline,
+                          color: Colors.red,
+                        ),
                         onPressed: () => _deleteMemo(index),
                       ),
                     ],

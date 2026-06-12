@@ -26,6 +26,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   );
 
   StreamSubscription<dynamic>? _overlaySubscription;
+  bool _openOverlayAfterPermission = false;
+  bool _isOpeningOverlay = false;
 
   @override
   void initState() {
@@ -53,6 +55,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     // 앱이 다시 화면에 보일 때 저장된 값을 다시 읽어 오버레이 변경사항을 반영한다.
     if (state == AppLifecycleState.resumed) {
       _reloadStoredState();
+      _openOverlayIfPermissionWasGranted();
     }
   }
 
@@ -67,11 +70,35 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     globalMemos = memos;
   }
 
-  // 오버레이 권한을 확인한 뒤 상단 위젯 오버레이를 바로 띄우고 홈 화면으로 이동한다.
+  // 오버레이 권한을 확인한 뒤 오버레이를 띄우고 홈 화면으로 이동한다.
   Future<void> _startOverlay() async {
+    if (_isOpeningOverlay) return;
     if (!await _checkOverlayPermission()) return;
-    await _openOverlayWindow(closeBeforeOpen: true);
-    await _homeChannel.invokeMethod('goHome');
+
+    await _openOverlayAndGoHome();
+  }
+
+  Future<void> _openOverlayIfPermissionWasGranted() async {
+    if (!_openOverlayAfterPermission || _isOpeningOverlay) return;
+    if (!await FlutterOverlayWindow.isPermissionGranted()) return;
+
+    _openOverlayAfterPermission = false;
+    await _openOverlayAndGoHome();
+  }
+
+  Future<void> _openOverlayAndGoHome() async {
+    _isOpeningOverlay = true;
+    try {
+      await _openOverlayWindow(closeBeforeOpen: true);
+      await _homeChannel.invokeMethod('goHome');
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('오버레이를 열지 못했습니다: $error')));
+    } finally {
+      _isOpeningOverlay = false;
+    }
   }
 
   // 실제 오버레이 창을 여는 공통 함수이다.
@@ -79,7 +106,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     if (closeBeforeOpen) {
       await _closeOverlayIfActive();
     }
-
     await FlutterOverlayWindow.showOverlay(
       enableDrag: false,
       alignment: OverlayAlignment.topLeft,
@@ -92,12 +118,26 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       height: WindowSize.matchParent,
     );
 
+    await _waitUntilOverlayStarted();
     await Future<void>.delayed(const Duration(milliseconds: 180));
+
     try {
       await FlutterOverlayWindow.shareData(AppStateStore.stateUpdatedEvent);
     } catch (_) {
       debugPrint('Overlay state event was skipped.');
     }
+  }
+
+  // showOverlay 호출 뒤 실제 서비스가 올라올 때까지 잠깐 기다린다.
+  Future<void> _waitUntilOverlayStarted() async {
+    for (var count = 0; count < 30; count++) {
+      if (await FlutterOverlayWindow.isActive()) {
+        return;
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+    }
+
+    throw StateError('Overlay service did not become active.');
   }
 
   // 이미 떠 있는 오버레이가 있으면 먼저 닫아 이전 투명 창이 남지 않게 한다.
@@ -165,14 +205,20 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
     if (shouldRequest != true) return false;
 
+    _openOverlayAfterPermission = true;
     await FlutterOverlayWindow.requestPermission();
     final granted = await FlutterOverlayWindow.isPermissionGranted();
+    if (granted) {
+      _openOverlayAfterPermission = false;
+      return true;
+    }
+
     if (!granted && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('오버레이 권한을 허용해야 사용할 수 있습니다.')),
+        const SnackBar(content: Text('권한을 허용한 뒤 앱으로 돌아오면 오버레이가 열립니다.')),
       );
     }
-    return granted;
+    return false;
   }
 
   @override

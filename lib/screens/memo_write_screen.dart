@@ -9,8 +9,8 @@ class MemoWriteScreen extends StatefulWidget {
   const MemoWriteScreen({
     super.key,
     this.editIndex,
-    this.initialTitle = '',
-    this.initialContent = '',
+    this.initialTitle = '적고 싶은 제목을 적으시오',
+    this.initialContent = '이곳은 내용을 적는 곳이오',
   });
 
   final int? editIndex;
@@ -46,8 +46,8 @@ class _MemoWriteScreenState extends State<MemoWriteScreen> {
     if (_titleController.text.trim().isEmpty) return;
 
     final memo = {
-      'title': _titleController.text.trim(),
-      'content': _contentController.text.trim(),
+      '제목': _titleController.text.trim(),
+      '내용': _contentController.text.trim(),
     };
 
     final editIndex = widget.editIndex;
@@ -87,7 +87,7 @@ class _MemoWriteScreenState extends State<MemoWriteScreen> {
               child: TextField(
                 controller: _contentController,
                 decoration: const InputDecoration(
-                  hintText: 'Content',
+                  hintText: '내용',
                   border: InputBorder.none,
                 ),
                 maxLines: null,
