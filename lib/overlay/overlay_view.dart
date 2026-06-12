@@ -4,10 +4,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_overlay_window/flutter_overlay_window.dart';
 import 'package:gimal/services/app_state_store.dart';
-import 'package:webview_flutter/webview_flutter.dart';
-import 'package:webview_flutter_android/webview_flutter_android.dart';
-import 'package:webview_flutter_platform_interface/webview_flutter_platform_interface.dart'
-    as webview_platform;
 
 // 실제 오버레이 화면을 구성하는 파일이다.
 // 상단 버튼 바, URL/북마크/메모/메뉴 패널과 오버레이 WebView를 제어한다.
@@ -49,7 +45,6 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
   final TextEditingController _memoContentController = TextEditingController();
   final ScrollController _bookmarkScrollController = ScrollController();
   final ScrollController _memoScrollController = ScrollController();
-  WebViewController? _webViewController;
   Offset? _launcherOffset;
   StreamSubscription<dynamic>? _overlaySubscription;
 
@@ -64,6 +59,13 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
   bool _isChangingSize = false;
   bool _lastLandscape = false;
   bool _memoEditorOpen = false;
+  bool _didInitialSync = false;
+  // 현재 오버레이 창에 적용된 포커스 플래그. show 시점과 동일하게 시작한다.
+  OverlayFlag _currentFlag = OverlayFlag.defaultFlag;
+  // 회전을 반영한 실제 화면 크기(physical px). 네이티브에서 받아 캐시한다.
+  // (ui.Display.size는 회전을 반영하지 않아 가로모드에서 폭이 틀어진다.)
+  double _screenWidthPx = 0;
+  double _screenHeightPx = 0;
   List<Map<String, String>> _bookmarks = [];
   List<Map<String, String>> _memos = [];
 
@@ -85,6 +87,7 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
   @override
   void dispose() {
     _isClosing = true;
+    _hideNativeWeb();
     WidgetsBinding.instance.removeObserver(this);
     _overlaySubscription?.cancel();
     _searchController.dispose();
@@ -106,7 +109,7 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
     _memoEditorOpen = false;
     _memoEditIndex = null;
     _launcherOffset = null;
-    _webViewController = null;
+    _hideNativeWeb();
   }
 
   @override
@@ -120,7 +123,7 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
         return;
       }
       if (_webOpen) {
-        await _resizeToWebOverlay();
+        await _resizeToExpandedOverlay();
         return;
       }
       await _resizeToExpandedOverlay();
@@ -152,6 +155,17 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
       _isDark = isDark;
       _stateLoaded = true;
     });
+
+    // 처음 표시될 때 창은 전체화면으로 떠 있다. 첫 프레임 뒤에 내용 크기로 줄여서
+    // 바 아래 화면(게임 등)을 조작할 수 있게 한다(최초 1회만).
+    if (!_didInitialSync && !_isCollapsed) {
+      _didInitialSync = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!_isClosing && mounted && !_isCollapsed) {
+          _resizeToExpandedOverlay();
+        }
+      });
+    }
   }
 
   // "앱으로" 버튼을 눌렀을 때 웹뷰를 닫고 메인 앱을 앞으로 가져온 뒤 오버레이를 종료한다.
@@ -159,8 +173,8 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
     FocusManager.instance.primaryFocus?.unfocus();
     _isClosing = true;
     _webOpen = false;
-    _webViewController = null;
     _activeMode = null;
+    await _hideNativeWeb();
 
     try {
       try {
@@ -188,15 +202,20 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
     try {
       if (!mounted || _isClosing) return;
 
+      final wasWebOpen = _webOpen;
       setState(() {
         _isCollapsed = true;
-        _webOpen = false;
-        _webViewController = null;
         _activeMode = null;
         _memoEditorOpen = false;
         _memoEditIndex = null;
       });
 
+      // 접기는 웹뷰를 끄지 않는다: 열려 있으면 창에서만 떼고(인스턴스·로딩 유지),
+      // _webOpen은 그대로 둬서 펼칠 때 다시 띄운다. 입력이 없으니 포커스도 되돌린다.
+      if (wasWebOpen) {
+        await _detachNativeWeb();
+      }
+      await _applyDesiredFlag();
       await WidgetsBinding.instance.endOfFrame;
       final launcherOffset = _launcherOffset ?? _defaultLauncherOffset();
       _launcherOffset = launcherOffset;
@@ -226,6 +245,10 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
       await FlutterOverlayWindow.moveOverlay(OverlayPosition(0, 0));
       await _resizeToExpandedOverlay();
       await FlutterOverlayWindow.moveOverlay(OverlayPosition(0, 0));
+      // 접어둔 웹뷰가 있으면 같은 인스턴스로 다시 띄운다.
+      if (_webOpen) {
+        await _reattachNativeWeb();
+      }
     } catch (error) {
       debugPrint('expandFromLauncher failed: $error');
     } finally {
@@ -233,17 +256,156 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
     }
   }
 
+  // Flutter 오버레이 창(컨트롤 UI)을 현재 상태에 맞춰 다시 잡는다.
+  // - 플래그: URL/메모 입력이나 웹뷰일 때만 focusPointer(키보드 가능), 그 외에는
+  //   defaultFlag(NOT_FOCUSABLE)로 둬서 뒤로가기와 바 바깥 터치가 아래 앱으로 통과한다.
+  // - 크기: 항상 상단 바/패널(+웹뷰일 땐 컨트롤바) 높이만큼만 띄운다. 실제 웹 내용은
+  //   네이티브 WebView 창이 이 스트립 아래에 따로 깔리므로 여기서 전체화면을 쓰지 않는다.
+  // 주의: 이 플러그인(0.5.0)의 resizeOverlay는 height에 matchParent(-1)를 넘기면 내부
+  //   버그로 창이 수백만 px가 되어 Vulkan 할당 중 앱이 죽으므로, 항상 실제 px를 넘긴다.
   Future<void> _resizeToExpandedOverlay() async {
-    await FlutterOverlayWindow.resizeOverlay(
-      WindowSize.matchParent,
-      WindowSize.matchParent,
-      false,
-    );
+    if (_isClosing || !mounted) return;
+
+    await _refreshScreenSize();
+    await _applyDesiredFlag();
+    if (_isClosing || !mounted) return;
+
+    final view = WidgetsBinding.instance.platformDispatcher.views.first;
+    final dpr = view.devicePixelRatio;
+    final topInset = view.padding.top / dpr;
+    final compact = _isLandscapeScreen();
+    // 네이티브 화면 크기 캐시가 아직 없으면 ui.Display.size로 폴백(폭 0 방지).
+    final screenWidthPx = _screenWidthPx > 0
+        ? _screenWidthPx
+        : view.display.size.width;
+    final width = (screenWidthPx / dpr).round();
+    final height = _webOpen
+        ? _webStripHeight(topInset, compact).ceil()
+        : (topInset + 16 + _mainWidgetHeight(compact)).ceil();
+
+    await FlutterOverlayWindow.resizeOverlay(width, height, false);
     await FlutterOverlayWindow.moveOverlay(OverlayPosition(0, 0));
+    if (_webOpen) {
+      await _updateNativeWebBounds();
+    }
   }
 
-  Future<void> _resizeToWebOverlay() async {
-    await _resizeToExpandedOverlay();
+  // 회전을 반영한 실제 화면 크기를 네이티브에서 받아 캐시한다.
+  Future<void> _refreshScreenSize() async {
+    try {
+      final size = await _utilsChannel.invokeMethod('getScreenSize');
+      if (size is Map) {
+        final w = (size['width'] as num?)?.toDouble() ?? 0;
+        final h = (size['height'] as num?)?.toDouble() ?? 0;
+        if (w > 0 && h > 0) {
+          _screenWidthPx = w;
+          _screenHeightPx = h;
+        }
+      }
+    } catch (error) {
+      debugPrint('getScreenSize failed: $error');
+    }
+  }
+
+  // 웹뷰가 열렸을 때 Flutter 컨트롤 스트립의 높이(logical). 이 아래부터 네이티브 웹뷰.
+  double _webStripHeight(double topInset, bool compact) =>
+      topInset + 8 + _mainWidgetHeight(compact) + 6 + 58 + 8;
+
+  // 네이티브 WebView 창이 차지할 영역(physical px): 스트립 아래 ~ 화면 끝.
+  (int, int, int, int) _webBoundsPx() {
+    final view = WidgetsBinding.instance.platformDispatcher.views.first;
+    final dpr = view.devicePixelRatio;
+    final topInset = view.padding.top / dpr;
+    final compact = _isLandscapeScreen();
+    final stripPx = (_webStripHeight(topInset, compact) * dpr).round();
+    final screenW =
+        (_screenWidthPx > 0 ? _screenWidthPx : view.display.size.width).round();
+    final screenH =
+        (_screenHeightPx > 0 ? _screenHeightPx : view.display.size.height)
+            .round();
+    return (0, stripPx, screenW, screenH - stripPx);
+  }
+
+  // 접기: 네이티브 웹뷰 창을 떼되 인스턴스(로딩 상태)는 유지한다.
+  Future<void> _detachNativeWeb() async {
+    try {
+      await _utilsChannel.invokeMethod('detachWebOverlay');
+    } catch (error) {
+      debugPrint('detachWebOverlay failed: $error');
+    }
+  }
+
+  // 펼치기: 접어둔 웹뷰를 같은 인스턴스 그대로 다시 띄운다.
+  Future<void> _reattachNativeWeb() async {
+    final (x, y, w, h) = _webBoundsPx();
+    try {
+      await _utilsChannel.invokeMethod('reattachWebOverlay', {
+        'x': x,
+        'y': y,
+        'width': w,
+        'height': h,
+      });
+    } catch (error) {
+      debugPrint('reattachWebOverlay failed: $error');
+    }
+  }
+
+  // 네이티브 WebView 창을 띄우고 url을 로드한다.
+  Future<void> _showNativeWeb(String url) async {
+    final (x, y, w, h) = _webBoundsPx();
+    try {
+      await _utilsChannel.invokeMethod('showWebOverlay', {
+        'url': url,
+        'x': x,
+        'y': y,
+        'width': w,
+        'height': h,
+      });
+    } catch (error) {
+      debugPrint('showWebOverlay failed: $error');
+    }
+  }
+
+  // 스트립 높이가 바뀌면(패널 열고 닫기 등) 네이티브 웹뷰 위치/크기도 맞춘다.
+  Future<void> _updateNativeWebBounds() async {
+    if (!_webOpen) return;
+    final (x, y, w, h) = _webBoundsPx();
+    try {
+      await _utilsChannel.invokeMethod('setWebOverlayBounds', {
+        'x': x,
+        'y': y,
+        'width': w,
+        'height': h,
+      });
+    } catch (error) {
+      debugPrint('setWebOverlayBounds failed: $error');
+    }
+  }
+
+  // 네이티브 WebView 창을 닫는다.
+  Future<void> _hideNativeWeb() async {
+    try {
+      await _utilsChannel.invokeMethod('hideWebOverlay');
+    } catch (error) {
+      debugPrint('hideWebOverlay failed: $error');
+    }
+  }
+
+  // 현재 상태에 맞는 포커스 플래그를 적용한다(바뀔 때만 네이티브 호출).
+  // 접힌 상태(런처 아이콘)에서는 입력이 없으므로 항상 defaultFlag.
+  Future<void> _applyDesiredFlag() async {
+    final desired =
+        (!_isCollapsed &&
+            (_webOpen || _activeMode == OverlayMode.url || _memoEditorOpen))
+        ? OverlayFlag.focusPointer
+        : OverlayFlag.defaultFlag;
+    if (desired == _currentFlag) return;
+    _currentFlag = desired;
+    try {
+      await FlutterOverlayWindow.updateFlag(desired);
+    } catch (error) {
+      debugPrint('updateFlag failed: $error');
+    }
   }
 
   Future<void> _moveLauncherOverlay() async {
@@ -292,79 +454,48 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
         _memoContentController.clear();
       }
     });
-    if (_webOpen) {
-      await _resizeToWebOverlay();
-    }
+    await _resizeToExpandedOverlay();
   }
 
-  // 검색어, URL, 북마크 주소를 오버레이 안의 Flutter WebView로 연다.
+  // 검색어, URL, 북마크 주소를 네이티브 WebView 오버레이 창으로 연다.
+  // (Flutter 오버레이 엔진은 Service라 Flutter WebView가 동작하지 않으므로 네이티브 사용)
   Future<void> _openWeb(String value) async {
     if (_isClosing) return;
 
     final url = _makeWebUrl(value);
     if (url.isEmpty) return;
 
-    try {
-      _lastLandscape = _isLandscapeScreen();
-      setState(() {
-        _webOpen = true;
-        _webViewController = null;
-        _searchController.text = url;
-      });
+    _lastLandscape = _isLandscapeScreen();
+    setState(() {
+      _webOpen = true;
+      _searchController.text = url;
+    });
 
-      await WidgetsBinding.instance.endOfFrame;
-      if (_isClosing || !mounted) return;
-      await _resizeToWebOverlay();
-      await WidgetsBinding.instance.endOfFrame;
-      if (_isClosing || !mounted) return;
-
-      final controller = _createWebViewController(url);
-      setState(() => _webViewController = controller);
-    } catch (error) {
-      if (mounted) {
-        setState(() {
-          _webOpen = false;
-          _webViewController = null;
-        });
-      }
-      debugPrint('open overlay WebView failed: $error');
-    }
+    await WidgetsBinding.instance.endOfFrame;
+    if (_isClosing || !mounted) return;
+    // 컨트롤 스트립을 먼저 자리잡은 뒤, 그 아래에 네이티브 웹뷰를 깐다.
+    await _resizeToExpandedOverlay();
+    if (_isClosing || !mounted) return;
+    await _showNativeWeb(url);
   }
 
-  WebViewController _createWebViewController(String url) {
-    return WebViewController()
-      ..setJavaScriptMode(JavaScriptMode.unrestricted)
-      ..setNavigationDelegate(
-        NavigationDelegate(
-          onPageFinished: (currentUrl) {
-            if (!mounted || !_webOpen) return;
-            _searchController.text = currentUrl;
-          },
-        ),
-      )
-      ..loadRequest(Uri.parse(url));
-  }
-
-  // 웹뷰를 닫고 오버레이 높이를 다시 상단 위젯 크기로 돌린다.
+  // 네이티브 웹뷰 창을 닫고 컨트롤 스트립 크기를 다시 줄인다.
   Future<void> _closeWeb() async {
     if (_isClosing || !mounted) return;
-    setState(() {
-      _webOpen = false;
-      _webViewController = null;
-    });
+    await _hideNativeWeb();
+    setState(() => _webOpen = false);
     await WidgetsBinding.instance.endOfFrame;
     if (!_isClosing && mounted) {
       await _resizeToExpandedOverlay();
     }
   }
 
-  // WebView가 뒤로 갈 수 있으면 이전 페이지로 이동한다.
+  // 네이티브 WebView가 뒤로 갈 수 있으면 이전 페이지로 이동한다.
   Future<void> _webGoBack() async {
-    final controller = _webViewController;
-    if (controller == null) return;
-
-    if (await controller.canGoBack()) {
-      await controller.goBack();
+    try {
+      await _utilsChannel.invokeMethod('webOverlayGoBack');
+    } catch (error) {
+      debugPrint('webOverlayGoBack failed: $error');
     }
   }
 
@@ -378,12 +509,10 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
     setState(() {
       _memoEditIndex = index;
       _memoEditorOpen = true;
-      _memoTitleController.text = memo?['title'] ?? '';
-      _memoContentController.text = memo?['content'] ?? '';
+      _memoTitleController.text = memo?['제목'] ?? '';
+      _memoContentController.text = memo?['내용'] ?? '';
     });
-    if (_webOpen) {
-      await _resizeToWebOverlay();
-    }
+    await _resizeToExpandedOverlay();
   }
 
   // 메모 입력창을 닫고 입력값과 수정 위치를 초기화한다.
@@ -399,9 +528,7 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
 
   Future<void> _cancelMemoEditor() async {
     _closeMemoEditor();
-    if (_webOpen) {
-      await _resizeToWebOverlay();
-    }
+    await _resizeToExpandedOverlay();
   }
 
   // 메모 입력창의 내용을 새 메모로 추가하거나 기존 메모에 덮어쓴다.
@@ -412,8 +539,8 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
 
     final nextMemos = List<Map<String, String>>.from(_memos);
     final savedMemo = {
-      'title': title.isEmpty ? '메모' : title,
-      'content': content,
+      '제목': title.isEmpty ? '메모' : title,
+      '내용': content,
     };
 
     final editIndex = _memoEditIndex;
@@ -455,9 +582,7 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
     setState(() => _memos = memos);
     await AppStateStore.saveMemos(memos);
     if (_isClosing || !mounted) return;
-    if (_webOpen) {
-      await _resizeToWebOverlay();
-    }
+    await _resizeToExpandedOverlay();
   }
 
   // 상단 위젯 높이를 계산해서 웹뷰가 열렸을 때 패널이 작아지지 않게 한다.
@@ -484,8 +609,10 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
   // 현재 화면이 가로 방향인지 세로 방향인지 판단한다.
   bool _isLandscapeScreen() {
     if (_webOpen) return _lastLandscape;
-    final size = MediaQuery.sizeOf(context);
-    return size.width > size.height;
+    // 회전을 반영한 실제 화면 크기로 방향을 판단한다(창 크기나 ui.Display.size로는
+    // 가로/세로를 오판함). 아직 캐시 전이면 세로로 가정한다.
+    if (_screenWidthPx <= 0 || _screenHeightPx <= 0) return false;
+    return _screenWidthPx > _screenHeightPx;
   }
 
   double _bookmarkPanelHeight(bool compact) {
@@ -540,13 +667,19 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
     return _buildExpandedOverlay();
   }
 
-  // 펼쳐진 오버레이에서는 배경을 깔지 않고 상단 탭 패널만 고정해서 보여준다.
+  // 펼쳐진 오버레이는 컨트롤 UI(상단 패널 + 웹뷰 컨트롤바)만 보여준다.
+  // 실제 웹 내용은 이 스트립 아래에 깔리는 별도의 네이티브 WebView 창이 담당한다.
   Widget _buildExpandedOverlay() {
+    // 런처에서 펼치는 도중, 창이 아직 커지기 전의 한 프레임에서는 폭이 매우 좁아
+    // (런처 48px) 상단 버튼 바가 overflow 난다. 충분히 넓어지기 전엔 그리지 않는다.
+    if (MediaQuery.sizeOf(context).width < 200) {
+      return const SizedBox.expand();
+    }
+
     final isLandscape = _isLandscapeScreen();
     _lastLandscape = isLandscape;
     final maxPanelHeight = _maxPanelHeight();
     final horizontalPadding = isLandscape ? 10.0 : 8.0;
-    final webController = _webViewController;
 
     return SizedBox.expand(
       child: SafeArea(
@@ -557,20 +690,13 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
             horizontalPadding,
             0,
           ),
-          child: _webOpen && webController != null
+          child: _webOpen
               ? Column(
+                  mainAxisSize: MainAxisSize.min,
                   children: [
-                    ConstrainedBox(
-                      constraints: BoxConstraints(maxHeight: maxPanelHeight),
-                      child: SingleChildScrollView(
-                        padding: EdgeInsets.zero,
-                        child: _buildTopOverlayPanel(isLandscape: isLandscape),
-                      ),
-                    ),
+                    _buildTopOverlayPanel(isLandscape: isLandscape),
                     const SizedBox(height: 6),
                     _buildWebControlBar(),
-                    const SizedBox(height: 6),
-                    Expanded(child: _buildWebView(webController)),
                   ],
                 )
               : Align(
@@ -591,24 +717,6 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
         ),
       ),
     );
-  }
-
-  // 실제 휴대폰 오버레이에서 WebView가 안 보이는 경우가 있어 Android는 Hybrid Composition으로 표시한다.
-  Widget _buildWebView(WebViewController controller) {
-    webview_platform.PlatformWebViewWidgetCreationParams params =
-        webview_platform.PlatformWebViewWidgetCreationParams(
-          controller: controller.platform,
-        );
-
-    if (webview_platform.WebViewPlatform.instance is AndroidWebViewPlatform) {
-      params =
-          AndroidWebViewWidgetCreationParams.fromPlatformWebViewWidgetCreationParams(
-            params,
-            displayWithHybridComposition: true,
-          );
-    }
-
-    return WebViewWidget.fromPlatformCreationParams(params: params);
   }
 
   Widget _buildWebControlBar() {
@@ -632,7 +740,7 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
             ),
           ),
           const SizedBox(width: 6),
-          _smallTextButton('이동', () => _searchUrl(), width: 56),
+          _smallTextButton('접기', _collapseToLauncher, width: 56),
           const SizedBox(width: 6),
           _iconAction(Icons.arrow_back, () => _webGoBack()),
         ],
@@ -796,18 +904,26 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
     required Color textColor,
     required Color mutedColor,
     required bool isLandscape,
+    bool fill = false,
   }) {
     if (_activeMode == OverlayMode.url) {
-      return _buildUrlPanel(textColor, mutedColor);
+      final panel = _buildUrlPanel(textColor, mutedColor);
+      return fill ? Align(alignment: Alignment.topCenter, child: panel) : panel;
     }
     if (_activeMode == OverlayMode.bookmarks) {
-      return _buildBookmarkPanel(textColor, mutedColor, compact: isLandscape);
+      return _buildBookmarkPanel(
+        textColor,
+        mutedColor,
+        compact: isLandscape,
+        fill: fill,
+      );
     }
     if (_activeMode == OverlayMode.memos) {
-      return _buildMemoPanel(compact: isLandscape);
+      return _buildMemoPanel(compact: isLandscape, fill: fill);
     }
     if (_activeMode == OverlayMode.menu) {
-      return _buildMenuPanel();
+      final panel = _buildMenuPanel();
+      return fill ? Align(alignment: Alignment.topCenter, child: panel) : panel;
     }
     return const SizedBox.shrink();
   }
@@ -920,6 +1036,8 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
         ),
         const SizedBox(width: 8),
         _iconAction(Icons.arrow_forward, _searchUrl),
+        const SizedBox(width: 8),
+        _smallTextButton('접기', _collapseToLauncher, width: 52),
       ],
     );
   }
@@ -929,14 +1047,13 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
     Color textColor,
     Color mutedColor, {
     required bool compact,
+    bool fill = false,
   }) {
     if (_bookmarks.isEmpty) {
       return _buildHintLine('저장된 북마크가 없습니다.', mutedColor);
     }
 
-    return SizedBox(
-      height: _bookmarkPanelHeight(compact),
-      child: Scrollbar(
+    final list = Scrollbar(
         controller: _bookmarkScrollController,
         thumbVisibility: true,
         child: ListView.builder(
@@ -944,8 +1061,8 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
           itemCount: _bookmarks.length,
           itemBuilder: (context, index) {
             final item = _bookmarks[index];
-            final title = item['title']?.trim().isNotEmpty == true
-                ? item['title']!.trim()
+            final title = item['제목']?.trim().isNotEmpty == true
+                ? item['제목']!.trim()
                 : '북마크';
             final url = item['url']?.trim().isNotEmpty == true
                 ? item['url']!.trim()
@@ -1004,22 +1121,23 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
             );
           },
         ),
-      ),
-    );
+      );
+
+    return fill
+        ? list
+        : SizedBox(height: _bookmarkPanelHeight(compact), child: list);
   }
 
   // 메모 목록 또는 메모 편집창을 보여주는 패널이다.
-  Widget _buildMemoPanel({required bool compact}) {
+  Widget _buildMemoPanel({required bool compact, bool fill = false}) {
     if (_memoEditorOpen) {
-      return SizedBox(
-        height: _memoPanelHeight(compact),
-        child: _buildMemoEditor(),
-      );
+      final editor = _buildMemoEditor();
+      return fill
+          ? editor
+          : SizedBox(height: _memoPanelHeight(compact), child: editor);
     }
 
-    return SizedBox(
-      height: _memoPanelHeight(compact),
-      child: Scrollbar(
+    final list = Scrollbar(
         controller: _memoScrollController,
         thumbVisibility: true,
         child: ListView.builder(
@@ -1038,8 +1156,8 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
 
             final memoIndex = index - 1;
             final memo = _memos[memoIndex];
-            final title = memo['title']?.isNotEmpty == true
-                ? memo['title']!
+            final title = memo['제목']?.isNotEmpty == true
+                ? memo['제목']!
                 : '메모';
             final content = memo['content']?.isNotEmpty == true
                 ? memo['content']!
@@ -1054,8 +1172,11 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
             );
           },
         ),
-      ),
-    );
+      );
+
+    return fill
+        ? list
+        : SizedBox(height: _memoPanelHeight(compact), child: list);
   }
 
   // 메모 추가/수정 시 패널 안에 표시되는 입력창이다.

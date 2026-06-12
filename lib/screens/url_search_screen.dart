@@ -131,7 +131,7 @@ class _UrlSearchScreenState extends State<UrlSearchScreen> {
               onPressed: () async {
                 setState(() {
                   globalBookmarks.add({
-                    'title': titleController.text,
+                    '제목': titleController.text,
                     'url': _currentUrl,
                     'desc': descController.text,
                   });

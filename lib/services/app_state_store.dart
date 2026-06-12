@@ -77,12 +77,12 @@ class AppStateStore {
   static List<Map<String, String>> defaultBookmarks() {
     return [
       {
-        'title': 'YouTube',
+        '제목': 'YouTube',
         'url': 'https://www.youtube.com',
         'desc': 'Video and search',
       },
       {
-        'title': 'Google',
+        '제목': 'Google',
         'url': 'https://www.google.com',
         'desc': 'Search engine',
       },

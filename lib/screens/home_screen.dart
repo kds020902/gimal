@@ -111,7 +111,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       alignment: OverlayAlignment.topLeft,
       overlayTitle: 'gimal',
       overlayContent: 'Overlay menu',
-      flag: OverlayFlag.focusPointer,
+      flag: OverlayFlag.defaultFlag,
       positionGravity: PositionGravity.none,
       startPosition: OverlayPosition(0, 0),
       width: WindowSize.matchParent,

@@ -98,7 +98,7 @@ class _BookmarkScreenState extends State<BookmarkScreen>
   // 북마크의 제목, URL, 설명을 수정하거나 삭제하는 팝업을 띄운다.
   void _showEditDialog(int index) {
     final titleController = TextEditingController(
-      text: globalBookmarks[index]['title'],
+      text: globalBookmarks[index]['제목'],
     );
     final urlController = TextEditingController(
       text: globalBookmarks[index]['url'],
@@ -144,7 +144,7 @@ class _BookmarkScreenState extends State<BookmarkScreen>
           TextButton(
             onPressed: () async {
               setState(() {
-                globalBookmarks[index]['title'] = titleController.text;
+                globalBookmarks[index]['제목'] = titleController.text;
                 globalBookmarks[index]['url'] = urlController.text;
                 globalBookmarks[index]['desc'] = descController.text;
               });
@@ -180,7 +180,7 @@ class _BookmarkScreenState extends State<BookmarkScreen>
                 return ListTile(
                   leading: const Icon(Icons.star, color: Colors.amber),
                   title: Text(
-                    item['title'] ?? '',
+                    item['제목'] ?? '',
                     style: TextStyle(color: theme.textTheme.bodyLarge?.color),
                   ),
                   subtitle: Text(

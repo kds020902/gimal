@@ -98,11 +98,11 @@ class _MemoScreenState extends State<MemoScreen> with WidgetsBindingObserver {
                 return ListTile(
                   leading: Icon(Icons.note, color: theme.colorScheme.primary),
                   title: Text(
-                    memo['title'] ?? '',
+                    memo['제목'] ?? '',
                     style: TextStyle(color: theme.textTheme.bodyLarge?.color),
                   ),
                   subtitle: Text(
-                    memo['content'] ?? '',
+                    memo['내용'] ?? '',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(color: theme.hintColor),
