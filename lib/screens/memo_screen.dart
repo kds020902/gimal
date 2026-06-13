@@ -68,8 +68,8 @@ class _MemoScreenState extends State<MemoScreen> with WidgetsBindingObserver {
       MaterialPageRoute(
         builder: (context) => MemoWriteScreen(
           editIndex: index,
-          initialTitle: memo['title'] ?? '',
-          initialContent: memo['content'] ?? '',
+          initialTitle: memo['제목'] ?? '',
+          initialContent: memo['내용'] ?? '',
         ),
       ),
     );

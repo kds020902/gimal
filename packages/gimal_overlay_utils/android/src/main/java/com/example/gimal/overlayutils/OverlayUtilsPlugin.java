@@ -8,6 +8,7 @@ import android.os.Handler;
 import android.os.Looper;
 import android.util.DisplayMetrics;
 import android.view.Gravity;
+import android.view.KeyEvent;
 import android.view.WindowManager;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
@@ -138,8 +139,10 @@ public final class OverlayUtilsPlugin
     final int type = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
         ? WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
         : WindowManager.LayoutParams.TYPE_PHONE;
-    // FLAG_NOT_FOCUSABLE: 키 입력(뒤로가기)은 가져가지 않지만 터치(스크롤·링크)는 받는다.
-    final int flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+    // 포커스 가능(FLAG_NOT_FOCUSABLE 제거)으로 둬서 하드웨어 뒤로가기 키를 받아
+    // 웹뷰 자체의 뒤로가기로 쓴다. FLAG_NOT_TOUCH_MODAL을 줘서 창 바깥(상단 컨트롤
+    // 스트립) 터치는 그쪽으로 통과시킨다.
+    final int flags = WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
         | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
         | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
         | WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED;
@@ -165,6 +168,18 @@ public final class OverlayUtilsPlugin
         settings.setMediaPlaybackRequiresUserGesture(true);
         // 링크 클릭이 외부 브라우저로 새지 않고 이 창 안에서 열리도록 한다.
         webView.setWebViewClient(new WebViewClient());
+        // 하드웨어 뒤로가기를 웹뷰의 이전 페이지 이동으로 처리한다(소비해서 오버레이가
+        // 닫히지 않게 한다).
+        webView.setFocusableInTouchMode(true);
+        webView.setOnKeyListener((v, keyCode, event) -> {
+          if (keyCode == KeyEvent.KEYCODE_BACK) {
+            if (event.getAction() == KeyEvent.ACTION_UP && webView.canGoBack()) {
+              webView.goBack();
+            }
+            return true;
+          }
+          return false;
+        });
         webParams = buildParams(x, y, w, h);
         wm().addView(webView, webParams);
         webAttached = true;

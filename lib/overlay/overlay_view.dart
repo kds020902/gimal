@@ -43,8 +43,13 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
   final TextEditingController _searchController = TextEditingController();
   final TextEditingController _memoTitleController = TextEditingController();
   final TextEditingController _memoContentController = TextEditingController();
+  final TextEditingController _bookmarkTitleController = TextEditingController();
+  final TextEditingController _bookmarkUrlController = TextEditingController();
   final ScrollController _bookmarkScrollController = ScrollController();
   final ScrollController _memoScrollController = ScrollController();
+  // URL/검색 입력칸에 자동 포커스(키보드 자동 표시)를 주기 위한 노드이다.
+  final FocusNode _searchFocusNode = FocusNode();
+  final FocusNode _bookmarkTitleFocusNode = FocusNode();
   Offset? _launcherOffset;
   StreamSubscription<dynamic>? _overlaySubscription;
 
@@ -59,6 +64,9 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
   bool _isChangingSize = false;
   bool _lastLandscape = false;
   bool _memoEditorOpen = false;
+  bool _bookmarkEditorOpen = false;
+  // 웹뷰만 접어둔 상태(컨트롤 스트립은 남고 네이티브 웹뷰 창만 잠시 숨김).
+  bool _webFolded = false;
   bool _didInitialSync = false;
   // 현재 오버레이 창에 적용된 포커스 플래그. show 시점과 동일하게 시작한다.
   OverlayFlag _currentFlag = OverlayFlag.defaultFlag;
@@ -93,6 +101,10 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
     _searchController.dispose();
     _memoTitleController.dispose();
     _memoContentController.dispose();
+    _bookmarkTitleController.dispose();
+    _bookmarkUrlController.dispose();
+    _searchFocusNode.dispose();
+    _bookmarkTitleFocusNode.dispose();
     _bookmarkScrollController.dispose();
     _memoScrollController.dispose();
     super.dispose();
@@ -208,6 +220,7 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
         _activeMode = null;
         _memoEditorOpen = false;
         _memoEditIndex = null;
+        _bookmarkEditorOpen = false;
       });
 
       // 접기는 웹뷰를 끄지 않는다: 열려 있으면 창에서만 떼고(인스턴스·로딩 유지),
@@ -245,8 +258,8 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
       await FlutterOverlayWindow.moveOverlay(OverlayPosition(0, 0));
       await _resizeToExpandedOverlay();
       await FlutterOverlayWindow.moveOverlay(OverlayPosition(0, 0));
-      // 접어둔 웹뷰가 있으면 같은 인스턴스로 다시 띄운다.
-      if (_webOpen) {
+      // 접어둔 웹뷰가 있으면 같은 인스턴스로 다시 띄운다(웹뷰만 접어둔 상태면 제외).
+      if (_webOpen && !_webFolded) {
         await _reattachNativeWeb();
       }
     } catch (error) {
@@ -394,9 +407,14 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
   // 현재 상태에 맞는 포커스 플래그를 적용한다(바뀔 때만 네이티브 호출).
   // 접힌 상태(런처 아이콘)에서는 입력이 없으므로 항상 defaultFlag.
   Future<void> _applyDesiredFlag() async {
-    final desired =
-        (!_isCollapsed &&
-            (_webOpen || _activeMode == OverlayMode.url || _memoEditorOpen))
+    // 키보드 입력이 필요한 패널이 열려 있거나, 웹뷰가 펼쳐져 있을 때만 focusPointer.
+    // 웹뷰를 접어두고 게임을 조작할 땐 defaultFlag여야 뒤로가기·터치가 게임으로 간다.
+    final wantsInput =
+        _activeMode == OverlayMode.url ||
+        _memoEditorOpen ||
+        _bookmarkEditorOpen;
+    final webShown = _webOpen && !_webFolded;
+    final desired = (!_isCollapsed && (wantsInput || webShown))
         ? OverlayFlag.focusPointer
         : OverlayFlag.defaultFlag;
     if (desired == _currentFlag) return;
@@ -412,6 +430,30 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
     final launcherOffset = _launcherOffset ?? _defaultLauncherOffset();
     _launcherOffset = launcherOffset;
     await FlutterOverlayWindow.moveOverlay(_overlayPositionFor(launcherOffset));
+  }
+
+  // 런처 아이콘을 드래그한 만큼 오버레이 창을 움직인다(화면 밖으로 안 나가게 제한).
+  void _onLauncherDrag(DragUpdateDetails details) {
+    if (_isClosing) return;
+    final view = WidgetsBinding.instance.platformDispatcher.views.first;
+    final dpr = view.devicePixelRatio;
+    final screenW =
+        (_screenWidthPx > 0 ? _screenWidthPx : view.display.size.width) / dpr;
+    final screenH =
+        (_screenHeightPx > 0 ? _screenHeightPx : view.display.size.height) / dpr;
+    final base = _launcherOffset ?? _defaultLauncherOffset();
+    final next = Offset(
+      (base.dx + details.delta.dx).clamp(
+        0.0,
+        (screenW - _launcherWindowSize).clamp(0.0, screenW),
+      ),
+      (base.dy + details.delta.dy).clamp(
+        0.0,
+        (screenH - _launcherWindowSize).clamp(0.0, screenH),
+      ),
+    );
+    _launcherOffset = next;
+    FlutterOverlayWindow.moveOverlay(_overlayPositionFor(next));
   }
 
   Offset _defaultLauncherOffset() {
@@ -453,8 +495,25 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
         _memoTitleController.clear();
         _memoContentController.clear();
       }
+      if (nextMode != OverlayMode.bookmarks) {
+        _bookmarkEditorOpen = false;
+        _bookmarkTitleController.clear();
+        _bookmarkUrlController.clear();
+      }
     });
     await _resizeToExpandedOverlay();
+    // URL 패널을 열면 입력칸에 자동 포커스해 키보드가 바로 뜨게 한다.
+    if (_activeMode == OverlayMode.url) {
+      _focusSearchSoon();
+    }
+  }
+
+  // 입력이 필요한 순간 키보드가 자동으로 뜨도록 다음 프레임에 입력칸에 포커스를 준다.
+  // (창 플래그가 focusPointer로 바뀐 뒤여야 키보드가 떠서 resize 이후에 호출한다.)
+  void _focusSearchSoon() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!_isClosing && mounted) _searchFocusNode.requestFocus();
+    });
   }
 
   // 검색어, URL, 북마크 주소를 네이티브 WebView 오버레이 창으로 연다.
@@ -468,6 +527,11 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
     _lastLandscape = _isLandscapeScreen();
     setState(() {
       _webOpen = true;
+      _webFolded = false;
+      // 웹뷰를 열면 열려 있던 패널/편집창은 닫아 스트립을 짧게 유지한다.
+      _activeMode = null;
+      _memoEditorOpen = false;
+      _bookmarkEditorOpen = false;
       _searchController.text = url;
     });
 
@@ -479,23 +543,33 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
     await _showNativeWeb(url);
   }
 
-  // 네이티브 웹뷰 창을 닫고 컨트롤 스트립 크기를 다시 줄인다.
+  // 컨트롤바 X: 네이티브 웹뷰 창을 완전히 닫고 컨트롤 스트립 크기를 다시 줄인다.
   Future<void> _closeWeb() async {
     if (_isClosing || !mounted) return;
     await _hideNativeWeb();
-    setState(() => _webOpen = false);
+    setState(() {
+      _webOpen = false;
+      _webFolded = false;
+    });
     await WidgetsBinding.instance.endOfFrame;
     if (!_isClosing && mounted) {
       await _resizeToExpandedOverlay();
     }
   }
 
-  // 네이티브 WebView가 뒤로 갈 수 있으면 이전 페이지로 이동한다.
-  Future<void> _webGoBack() async {
-    try {
-      await _utilsChannel.invokeMethod('webOverlayGoBack');
-    } catch (error) {
-      debugPrint('webOverlayGoBack failed: $error');
+  // 컨트롤바 접기/펼치기: 웹뷰 창만 잠시 접거나(끄지 않고) 다시 띄운다.
+  // 접으면 상단 컨트롤 스트립만 남아 그 아래 화면(게임 등)을 조작할 수 있다.
+  Future<void> _toggleWebFold() async {
+    if (_isClosing || !_webOpen) return;
+    if (_webFolded) {
+      setState(() => _webFolded = false);
+      await _resizeToExpandedOverlay();
+      if (_isClosing || !mounted) return;
+      await _reattachNativeWeb();
+    } else {
+      await _detachNativeWeb();
+      setState(() => _webFolded = true);
+      await _resizeToExpandedOverlay();
     }
   }
 
@@ -585,6 +659,59 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
     await _resizeToExpandedOverlay();
   }
 
+  // 새 북마크 입력창(이름 + URL)을 연다. URL 패널의 '북마크 추가'에서 현재 URL을
+  // 미리 채워 호출한다. 북마크 패널로 전환해 폼을 보여준다.
+  Future<void> _openBookmarkEditor({String url = ''}) async {
+    setState(() {
+      _activeMode = OverlayMode.bookmarks;
+      _bookmarkEditorOpen = true;
+      _bookmarkTitleController.clear();
+      _bookmarkUrlController.text = url.trim();
+    });
+    await _resizeToExpandedOverlay();
+    // 입력이 필요한 순간이므로 이름칸에 자동 포커스해 키보드를 띄운다.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!_isClosing && mounted) _bookmarkTitleFocusNode.requestFocus();
+    });
+  }
+
+  void _closeBookmarkEditor() {
+    FocusManager.instance.primaryFocus?.unfocus();
+    setState(() {
+      _bookmarkEditorOpen = false;
+      _bookmarkTitleController.clear();
+      _bookmarkUrlController.clear();
+    });
+  }
+
+  Future<void> _cancelBookmarkEditor() async {
+    _closeBookmarkEditor();
+    await _resizeToExpandedOverlay();
+  }
+
+  // 입력한 제목/URL을 새 북마크로 저장한다(제목 비면 URL을 이름으로).
+  Future<void> _saveBookmarkEditor() async {
+    final title = _bookmarkTitleController.text.trim();
+    final rawUrl = _bookmarkUrlController.text.trim();
+    if (rawUrl.isEmpty) return;
+    final url = _makeWebUrl(rawUrl);
+
+    final nextBookmarks = List<Map<String, String>>.from(_bookmarks)
+      ..add({'제목': title.isEmpty ? url : title, 'url': url, 'desc': ''});
+
+    _closeBookmarkEditor();
+    await _saveOverlayBookmarks(nextBookmarks);
+  }
+
+  // 오버레이 안의 북마크 목록을 갱신하고 저장소에도 저장한다.
+  Future<void> _saveOverlayBookmarks(List<Map<String, String>> bookmarks) async {
+    if (_isClosing || !mounted) return;
+    setState(() => _bookmarks = bookmarks);
+    await AppStateStore.saveBookmarks(bookmarks);
+    if (_isClosing || !mounted) return;
+    await _resizeToExpandedOverlay();
+  }
+
   // 상단 위젯 높이를 계산해서 웹뷰가 열렸을 때 패널이 작아지지 않게 한다.
   double _mainWidgetHeight(bool compact) {
     final buttonBarHeight = compact ? 54.0 : 58.0;
@@ -616,6 +743,9 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
   }
 
   double _bookmarkPanelHeight(bool compact) {
+    if (_bookmarkEditorOpen) {
+      return 152;
+    }
     return compact ? 120 : 188;
   }
 
@@ -740,9 +870,17 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
             ),
           ),
           const SizedBox(width: 6),
-          _smallTextButton('접기', _collapseToLauncher, width: 56),
+          // 현재 보고 있는 페이지를 이름과 함께 북마크로 추가한다.
+          _iconAction(
+            Icons.bookmark_add_outlined,
+            () => _openBookmarkEditor(url: _searchController.text),
+          ),
           const SizedBox(width: 6),
-          _iconAction(Icons.arrow_back, () => _webGoBack()),
+          _smallTextButton(
+            _webFolded ? '펼치기' : '접기',
+            _toggleWebFold,
+            width: 56,
+          ),
         ],
       ),
     );
@@ -752,6 +890,7 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
       onTap: _expandFromLauncher,
+      onPanUpdate: _onLauncherDrag,
       child: Container(
         width: _launcherIconSize,
         height: _launcherIconSize,
@@ -1023,6 +1162,7 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
             height: 42,
             child: TextField(
               controller: _searchController,
+              focusNode: _searchFocusNode,
               style: TextStyle(color: textColor, fontSize: 14),
               textInputAction: TextInputAction.search,
               decoration: _fieldDecoration(
@@ -1036,8 +1176,6 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
         ),
         const SizedBox(width: 8),
         _iconAction(Icons.arrow_forward, _searchUrl),
-        const SizedBox(width: 8),
-        _smallTextButton('접기', _collapseToLauncher, width: 52),
       ],
     );
   }
@@ -1049,6 +1187,13 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
     required bool compact,
     bool fill = false,
   }) {
+    if (_bookmarkEditorOpen) {
+      final editor = _buildBookmarkEditor();
+      return fill
+          ? editor
+          : SizedBox(height: _bookmarkPanelHeight(compact), child: editor);
+    }
+
     if (_bookmarks.isEmpty) {
       return _buildHintLine('저장된 북마크가 없습니다.', mutedColor);
     }
@@ -1128,6 +1273,51 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
         : SizedBox(height: _bookmarkPanelHeight(compact), child: list);
   }
 
+  // 새 북마크를 직접 입력(이름 + URL)하는 폼이다.
+  Widget _buildBookmarkEditor() {
+    return Material(
+      color: _surfaceColor,
+      borderRadius: BorderRadius.circular(10),
+      child: Padding(
+        padding: const EdgeInsets.all(8),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            SizedBox(
+              height: 38,
+              child: TextField(
+                controller: _bookmarkTitleController,
+                focusNode: _bookmarkTitleFocusNode,
+                style: TextStyle(color: _textColor, fontSize: 14),
+                decoration: _fieldDecoration('이름', Icons.title, _mutedColor),
+              ),
+            ),
+            const SizedBox(height: 6),
+            SizedBox(
+              height: 38,
+              child: TextField(
+                controller: _bookmarkUrlController,
+                style: TextStyle(color: _textColor, fontSize: 14),
+                textInputAction: TextInputAction.done,
+                decoration: _fieldDecoration('URL', Icons.link, _mutedColor),
+                onSubmitted: (_) => _saveBookmarkEditor(),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                const Spacer(),
+                _smallTextButton('취소', _cancelBookmarkEditor, width: 48),
+                const SizedBox(width: 6),
+                _smallTextButton('저장', () => _saveBookmarkEditor(), width: 48),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   // 메모 목록 또는 메모 편집창을 보여주는 패널이다.
   Widget _buildMemoPanel({required bool compact, bool fill = false}) {
     if (_memoEditorOpen) {
@@ -1159,8 +1349,8 @@ class _OverlayViewState extends State<OverlayView> with WidgetsBindingObserver {
             final title = memo['제목']?.isNotEmpty == true
                 ? memo['제목']!
                 : '메모';
-            final content = memo['content']?.isNotEmpty == true
-                ? memo['content']!
+            final content = memo['내용']?.isNotEmpty == true
+                ? memo['내용']!
                 : '메모 내용이 없습니다.';
 
             return _memoTile(
