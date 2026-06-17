@@ -3,35 +3,47 @@ import 'package:gimal/main.dart';
 import 'package:gimal/services/app_state_store.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
-// 사용자가 입력한 검색어 또는 URL을 WebView로 여는 화면이다.
-// 현재 열린 페이지를 북마크로 저장하는 기능도 함께 담당한다.
+// 검색어/URL을 WebView로 여는 화면. 메인 앱은 Activity 위에서 돌아서 Flutter WebView가
+// 정상 동작하므로(오버레이와 달리) 여기선 webview_flutter를 그대로 씀.
+// 현재 보고 있는 페이지를 북마크로 저장하는 기능도 같이 둠.
+
+// ── 목차 ─────────────────────────────────
+//  · WebView 초기화 : JS 켜고 · 페이지 이동 시 현재 URL 기억
+//  · 검색           : 입력을 무조건 구글 검색으로 엶
+//  · 북마크 저장     : 지금 보는 페이지를 북마크로(팝업)
+//  · build          : 검색창 + 웹뷰
+// ────────────────────────────────────────────
 
 class UrlSearchScreen extends StatefulWidget {
   const UrlSearchScreen({super.key});
 
+  // StatefulWidget이 자신의 상태(State) 객체를 만드는 필수 메서드.
   @override
   State<UrlSearchScreen> createState() => _UrlSearchScreenState();
 }
 
 class _UrlSearchScreenState extends State<UrlSearchScreen> {
-  // 검색창 입력값과 WebView를 제어하기 위한 컨트롤러이다.
+  // 검색 입력값을 읽으려고 둔 컨트롤러.
   final TextEditingController _searchController = TextEditingController();
+  // WebView를 코드에서 제어(loadRequest)하려고 둠. initState에서 한 번만 만들어서 late final.
   late final WebViewController _webViewController;
 
-  // 검색 전 안내 화면과 검색 후 WebView 화면을 구분하기 위한 값이다.
+  // 검색 전(안내문)과 검색 후(WebView)를 구분하려는 플래그.
   bool _isSearching = false;
+  // 북마크 저장에 쓰려고 "지금 열려 있는 주소"를 기억해 둠.
   String _currentUrl = '';
 
   @override
   void initState() {
     super.initState();
 
-    // WebView 설정을 초기화하고, 페이지 로딩이 끝나면 현재 URL을 기억한다.
+    // JS 켜고, 배경 투명, 페이지 이동이 끝나면 현재 URL을 기억하도록 설정.
     _webViewController = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setBackgroundColor(Colors.transparent)
       ..setNavigationDelegate(
         NavigationDelegate(
+          // 링크를 눌러 이동해도 _currentUrl이 최신이 되게 갱신(북마크가 현재 페이지를 저장).
           onPageFinished: (String url) {
             setState(() => _currentUrl = url);
           },
@@ -39,44 +51,32 @@ class _UrlSearchScreenState extends State<UrlSearchScreen> {
       );
   }
 
+  // 화면이 사라질 때 컨트롤러를 해제(안 풀면 메모리 누수).
   @override
   void dispose() {
     _searchController.dispose();
-    super.dispose();
+    super.dispose(); // 프레임워크 정리(필수)
   }
 
-  // 입력값이 URL이면 바로 열고, 일반 검색어면 구글 검색 주소로 바꿔 연다.
+  // 입력을 "무조건 구글 검색"으로 연다(URL 직접 열기·검증 없이 단순화).
   void _performSearch(String query) {
     final trimmed = query.trim();
+    // 빈칸이면 검색할 게 없어 무시.
     if (trimmed.isEmpty) return;
 
-    final uri = _makeSearchUri(trimmed);
-    if (uri == null) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('주소를 확인해주세요.')));
-      return;
-    }
-
     setState(() => _isSearching = true);
-    _webViewController.loadRequest(uri);
+    // Uri.https가 검색어를 자동 인코딩(공백·한글 등)해 줘서, 무조건 구글 검색 결과로 이동.
+    _webViewController.loadRequest(
+      Uri.https('www.google.com', '/search', {'q': trimmed}),
+    );
   }
 
-  // URL과 검색어를 구분해서 WebView가 열 수 있는 Uri 형태로 변환한다.
-  Uri? _makeSearchUri(String value) {
-    if (value.startsWith('http://') || value.startsWith('https://')) {
-      final uri = Uri.tryParse(value);
-      if (uri == null || !uri.hasScheme || uri.host.isEmpty) return null;
-      return uri;
-    }
-
-    return Uri.https('www.google.com', '/search', {'q': value});
-  }
-
-  // 현재 보고 있는 웹페이지를 북마크 목록에 저장하는 팝업을 띄운다.
+  // 지금 보고 있는 페이지를 북마크로 저장하는 팝업을 띄우려고 둠.
   void _saveBookmark() {
+    // 아직 연 페이지가 없으면 저장할 게 없어 무시.
     if (_currentUrl.isEmpty) return;
 
+    // 이름 기본값은 "북마크 N"으로 채워 그냥 저장해도 구분되게 함.
     final titleController = TextEditingController(
       text: '북마크 ${globalBookmarks.length + 1}',
     );
@@ -107,6 +107,7 @@ class _UrlSearchScreenState extends State<UrlSearchScreen> {
                   'URL',
                   style: TextStyle(color: theme.hintColor, fontSize: 12),
                 ),
+                // URL은 수정 대상이 아니라 현재 주소를 보여주기만 함.
                 Text(
                   _currentUrl,
                   style: TextStyle(color: theme.textTheme.bodySmall?.color),
@@ -129,6 +130,7 @@ class _UrlSearchScreenState extends State<UrlSearchScreen> {
             ),
             TextButton(
               onPressed: () async {
+                // 제목 키는 한글 '제목'로 통일(목록/오버레이가 같은 키로 읽음).
                 setState(() {
                   globalBookmarks.add({
                     '제목': titleController.text,
@@ -136,7 +138,9 @@ class _UrlSearchScreenState extends State<UrlSearchScreen> {
                     'desc': descController.text,
                   });
                 });
+                // 저장하면 이벤트로 다른 화면·오버레이에도 전파됨.
                 await AppStateStore.saveBookmarks(globalBookmarks);
+                // 비동기 뒤라 위젯이 살아있는지 확인하고 닫기/알림.
                 if (!context.mounted) return;
                 Navigator.pop(context);
                 if (!mounted) return;
@@ -156,7 +160,7 @@ class _UrlSearchScreenState extends State<UrlSearchScreen> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
 
-    // 위쪽에는 검색창과 북마크 버튼을 두고, 아래에는 WebView 또는 안내 문구를 보여준다.
+    // 앱바에 검색창+별(북마크) 버튼, 본문엔 검색 전 안내문 또는 검색 후 WebView.
     return Scaffold(
       appBar: AppBar(
         title: Row(
