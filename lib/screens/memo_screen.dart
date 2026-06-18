@@ -7,10 +7,10 @@ import 'package:gimal/services/app_state_store.dart';
 
 // 메모 목록 화면. 추가/수정/삭제를 처리하고, 오버레이에서 바뀐 메모도 즉시 다시 불러옴.
 
-// ── 목차 ─────────────────────────────────
-//  · 생명주기·동기화 : 메모 변경 구독 + 돌아왔을 때 재로드
-//  · 삭제/수정 이동  : 목록에서 삭제 · 작성화면(수정 모드)으로
-//  · build          : 메모 목록 + 우하단 추가 버튼
+// ── 목차 (본문에서 같은 번호 헤더로 점프) ──────
+//  1. 생명주기·동기화 : 메모 변경 구독 + 돌아왔을 때 재로드
+//  2. 삭제/수정 이동  : 목록에서 삭제 · 작성화면(수정 모드)으로
+//  3. build          : 메모 목록 + 우하단 추가 버튼
 // ────────────────────────────────────────────
 
 class MemoScreen extends StatefulWidget {
@@ -27,6 +27,8 @@ class _MemoScreenState extends State<MemoScreen> with WidgetsBindingObserver {
   // 저장소 변경 이벤트 구독(오버레이가 메모를 바꾸면 받기 위함).
   StreamSubscription<dynamic>? _stateSubscription;
 
+  // ═══ 1. 생명주기·동기화 ══════════════════════
+  // 작동: 켜질 때 변경 구독+초기 로드 → 돌아오면(resumed) 재로드 → 닫힐 때 구독 해제.
   @override
   void initState() {
     super.initState();
@@ -45,8 +47,8 @@ class _MemoScreenState extends State<MemoScreen> with WidgetsBindingObserver {
   // 화면이 사라질 때 initState에서 등록한 것들을 해제(안 하면 누수 + dispose 후 setState 크래시).
   @override
   void dispose() {
-    WidgetsBinding.instance.removeObserver(this); // 생명주기 관찰 해제(addObserver의 짝)
-    _stateSubscription?.cancel(); // 이벤트 구독 취소(listen의 짝)
+    WidgetsBinding.instance.removeObserver(this); // 생명주기 관찰 해제
+    _stateSubscription?.cancel(); // 이벤트 구독 취소
     super.dispose(); // 프레임워크 정리(필수)
   }
 
@@ -64,6 +66,9 @@ class _MemoScreenState extends State<MemoScreen> with WidgetsBindingObserver {
     if (!mounted) return;
     setState(() => globalMemos = memos);
   }
+
+  // ═══ 2. 삭제/수정 이동 ═══════════════════════
+  // 작동: 삭제=목록에서 빼고 저장, 수정=작성 화면을 수정 모드로 열고 돌아오면 다시 로드.
 
   // 선택한 메모를 목록에서 빼고 저장(저장 시 다른 화면에도 전파)하려고 둠.
   Future<void> _deleteMemo(int index) async {
@@ -88,6 +93,8 @@ class _MemoScreenState extends State<MemoScreen> with WidgetsBindingObserver {
     await _loadMemos();
   }
 
+  // ═══ 3. build ════════════════════════════════
+  // 작동: 메모가 없으면 안내문, 있으면 목록(수정/삭제 버튼) + 우하단 추가 버튼을 그림.
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);

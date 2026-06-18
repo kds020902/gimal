@@ -7,11 +7,11 @@ import 'package:webview_flutter/webview_flutter.dart';
 
 // 저장된 북마크 목록 화면. 누르면 WebView로 열고, 수정/삭제는 저장소에 반영함.
 
-// ── 목차 ─────────────────────────────────
-//  · 생명주기·동기화 : 북마크 변경 구독 + 돌아왔을 때 재로드
-//  · 북마크 열기     : 눌러서 WebView로 (검증 없이 바로)
-//  · 수정/삭제       : 편집 팝업
-//  · build          : 북마크 목록
+// ── 목차 (본문에서 같은 번호 헤더로 점프) ──────
+//  1. 생명주기·동기화 : 북마크 변경 구독 + 돌아왔을 때 재로드
+//  2. 북마크 열기     : 눌러서 WebView로 (검증 없이 바로)
+//  3. 수정/삭제       : 편집 팝업
+//  4. build          : 북마크 목록
 // ────────────────────────────────────────────
 
 class BookmarkScreen extends StatefulWidget {
@@ -29,6 +29,8 @@ class _BookmarkScreenState extends State<BookmarkScreen>
   // 저장소 변경 이벤트 구독(오버레이가 북마크를 바꾸면 받기 위함).
   StreamSubscription<dynamic>? _stateSubscription;
 
+  // ═══ 1. 생명주기·동기화 ══════════════════════
+  // 작동: 켜질 때 변경 구독+초기 로드 → 돌아오면(resumed) 재로드 → 닫힐 때 구독 해제.
   @override
   void initState() {
     super.initState();
@@ -67,6 +69,8 @@ class _BookmarkScreenState extends State<BookmarkScreen>
     setState(() => globalBookmarks = bookmarks);
   }
 
+  // ═══ 2. 북마크 열기 ══════════════════════════
+  // 작동: 주소에 http(s)가 없으면 붙여서 새 WebView 화면으로 엶(검증 없이 바로).
   // 북마크 주소를 새 WebView 화면으로 연다.
   // (검증/안내 없이 그냥 엶 — 틀린 링크는 웹뷰가 알아서 에러 페이지로 처리하니까.)
   void _openUrl(String url) {
@@ -95,6 +99,8 @@ class _BookmarkScreenState extends State<BookmarkScreen>
     );
   }
 
+  // ═══ 3. 수정/삭제 ════════════════════════════
+  // 작동: 기존 값을 채운 팝업을 띄워 저장(덮어쓰기) 또는 삭제 → 저장소에 반영+전파.
   // 북마크 한 개의 이름/URL/설명을 수정하거나 삭제하는 팝업을 띄우려고 둠.
   void _showEditDialog(int index) {
     // 기존 값을 미리 채워 두려고 컨트롤러에 현재 값을 넣음(제목 키는 한글 '제목').
@@ -161,6 +167,8 @@ class _BookmarkScreenState extends State<BookmarkScreen>
     );
   }
 
+  // ═══ 4. build ════════════════════════════════
+  // 작동: 북마크가 없으면 안내문, 있으면 목록(탭=열기, 연필=수정)을 그림.
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);

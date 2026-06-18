@@ -11,12 +11,12 @@ import 'package:gimal/services/app_state_store.dart';
 
 // 메인 앱의 첫 화면(메뉴). 각 기능 화면으로 보내고, 오버레이를 켜고, 다크모드를 토글함.
 
-// ── 목차 ─────────────────────────────────
-//  · 생명주기·동기화 : 저장값 변경 구독 + 돌아왔을 때(resumed) 재로드
-//  · 오버레이 열기   : 권한 확인 → 창 띄움 → 홈으로 보내기
-//  · 창 대기/닫기    : 재오픈 시 투명창 남는 레이스 방어
-//  · 권한 확인       : 오버레이 권한 없으면 설정으로
-//  · build / 메뉴 카드(_buildMenuCard)
+// ── 목차 (본문에서 같은 번호 헤더로 점프) ──────
+//  1. 생명주기·동기화 : 저장값 변경 구독 + 돌아왔을 때(resumed) 재로드
+//  2. 오버레이 열기   : 권한 확인 → 창 띄움 → 홈으로 보내기
+//  3. 창 대기/닫기    : 재오픈 시 투명창 남는 레이스 방어
+//  4. 권한 확인       : 오버레이 권한 없으면 설정으로
+//  5. build / 메뉴 카드(_buildMenuCard)
 // ────────────────────────────────────────────
 
 class HomeScreen extends StatefulWidget {
@@ -43,6 +43,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   // 오버레이 여는 중 중복 호출을 막는 플래그(버튼 연타 방지).
   bool _isOpeningOverlay = false;
 
+  // ═══ 1. 생명주기·동기화 ══════════════════════
+  // 작동: 켜질 때 변경 구독+초기 로드 → 돌아오면(resumed) 재로드 → 닫힐 때 구독 해제.
   @override
   void initState() {
     super.initState();
@@ -87,6 +89,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     globalMemos = memos;
   }
 
+  // ═══ 2. 오버레이 열기 ════════════════════════
+  // 작동: 권한 확인 → 오버레이 창 띄움(이전 창 닫고) → goHome으로 앱을 뒤로 보냄.
   // "오버레이 전환" 버튼: 권한을 먼저 확인하고, 있으면 오버레이를 켜고 홈으로 보냄.
   Future<void> _startOverlay() async {
     if (_isOpeningOverlay) return;
@@ -166,6 +170,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     throw StateError('오버레이가 열리지 않았습니다.');
   }
 
+  // ═══ 3. 창 대기/닫기 ═════════════════════════
+  // 작동: 닫기·재오픈 사이에 투명창이 남지 않도록 실제로 닫힐 때까지 폴링하며 기다림.
   // 이미 떠 있는 오버레이가 있으면 닫아, 재오픈 시 이전 투명 창이 남지 않게 하려고 둠.
   //해당 코드는 "오버레이 창을 염" -> "앱으로 클릭" ->"메인에서 다시 오버레이 전환 클릭" ->"오버레이 안뜸" -> 하지만 오버레이는 떠 있다 생각해 클릭이 안됨.
   //이러한 상태가 있는걸 발견했기에, 생성.
@@ -206,6 +212,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     //앱으로 누르고 -> 곧바로 오버레이 전환 -> 버그 터질수도 있어서 0.3초 정도 시스템이 "이거 제거함"의 시간을 줌
   }
 
+  // ═══ 4. 권한 확인 ════════════════════════════
+  // 작동: 권한이 없으면 안내 팝업 → 설정 앱으로 보냄(돌아오면 자동 오픈하도록 플래그 ON).
   // 오버레이(SYSTEM_ALERT_WINDOW) 권한이 없으면 설정으로 보낼지 물어보려고 둠.
   Future<bool> _checkOverlayPermission() async {
     if (await FlutterOverlayWindow.isPermissionGranted()) {
@@ -247,6 +255,8 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     return false;
   }
 
+  // ═══ 5. build / 메뉴 카드 ════════════════════
+  // 작동: 메뉴 카드들을 세로로 쌓아 그림. _buildMenuCard로 카드 모양을 한 틀에서 찍어냄.
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);

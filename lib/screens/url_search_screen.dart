@@ -7,11 +7,11 @@ import 'package:webview_flutter/webview_flutter.dart';
 // 정상 동작하므로(오버레이와 달리) 여기선 webview_flutter를 그대로 씀.
 // 현재 보고 있는 페이지를 북마크로 저장하는 기능도 같이 둠.
 
-// ── 목차 ─────────────────────────────────
-//  · WebView 초기화 : JS 켜고 · 페이지 이동 시 현재 URL 기억
-//  · 검색           : 입력을 무조건 구글 검색으로 엶
-//  · 북마크 저장     : 지금 보는 페이지를 북마크로(팝업)
-//  · build          : 검색창 + 웹뷰
+// ── 목차 (본문에서 같은 번호 헤더로 점프) ──────
+//  1. WebView 초기화 : JS 켜고 · 페이지 이동 시 현재 URL 기억
+//  2. 검색           : 입력을 무조건 구글 검색으로 엶
+//  3. 북마크 저장     : 지금 보는 페이지를 북마크로(팝업)
+//  4. build          : 검색창 + 웹뷰
 // ────────────────────────────────────────────
 
 class UrlSearchScreen extends StatefulWidget {
@@ -33,6 +33,8 @@ class _UrlSearchScreenState extends State<UrlSearchScreen> {
   // 북마크 저장에 쓰려고 "지금 열려 있는 주소"를 기억해 둠.
   String _currentUrl = '';
 
+  // ═══ 1. WebView 초기화 ═══════════════════════
+  // 작동: WebView를 한 번 만들고 JS 켬. 페이지 이동이 끝날 때마다 현재 주소를 기억해 둠.
   @override
   void initState() {
     super.initState();
@@ -58,6 +60,8 @@ class _UrlSearchScreenState extends State<UrlSearchScreen> {
     super.dispose(); // 프레임워크 정리(필수)
   }
 
+  // ═══ 2. 검색 ═════════════════════════════════
+  // 작동: 입력값을 구글 검색 URL로 만들어 WebView에 로드(검색어는 자동 인코딩).
   // 입력을 "무조건 구글 검색"으로 연다(URL 직접 열기·검증 없이 단순화).
   void _performSearch(String query) {
     final trimmed = query.trim();
@@ -71,6 +75,8 @@ class _UrlSearchScreenState extends State<UrlSearchScreen> {
     );
   }
 
+  // ═══ 3. 북마크 저장 ══════════════════════════
+  // 작동: 지금 보는 페이지 주소로 팝업을 띄워, 이름/설명을 받아 북마크 목록에 추가+저장.
   // 지금 보고 있는 페이지를 북마크로 저장하는 팝업을 띄우려고 둠.
   void _saveBookmark() {
     // 아직 연 페이지가 없으면 저장할 게 없어 무시.
@@ -156,6 +162,8 @@ class _UrlSearchScreenState extends State<UrlSearchScreen> {
     );
   }
 
+  // ═══ 4. build ════════════════════════════════
+  // 작동: 앱바에 검색창+별 버튼, 본문은 검색 전엔 안내문 / 검색 후엔 WebView를 보여줌.
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);

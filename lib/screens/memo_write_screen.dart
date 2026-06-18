@@ -4,10 +4,10 @@ import 'package:gimal/services/app_state_store.dart';
 
 // 메모를 새로 쓰거나 기존 메모를 수정하는 화면. 저장하면 전역 목록 + 저장소를 함께 갱신함.
 
-// ──목차 ─────────────────────────────────
-//  · 입력 초기화 : 수정이면 기존 값, 새 메모면 빈칸(hint만)
-//  · 저장        : 새 메모 추가 / 기존 메모 교체
-//  · build       : 제목·내용 입력 폼
+// ── 목차 (본문에서 같은 번호 헤더로 점프) ──────
+//  1. 입력 초기화 : 수정이면 기존 값, 새 메모면 빈칸(hint만)
+//  2. 저장        : 새 메모 추가 / 기존 메모 교체
+//  3. build       : 제목·내용 입력 폼
 // ────────────────────────────────────────────
 
 class MemoWriteScreen extends StatefulWidget {
@@ -35,6 +35,8 @@ class _MemoWriteScreenState extends State<MemoWriteScreen> {
   final TextEditingController _titleController = TextEditingController();
   final TextEditingController _contentController = TextEditingController();
 
+  // ═══ 1. 입력 초기화 ══════════════════════════
+  // 작동: 들어올 때 받은 값을 입력칸에 채움(수정=기존 값, 새 메모=빈칸).
   @override
   void initState() {
     super.initState();
@@ -51,6 +53,8 @@ class _MemoWriteScreenState extends State<MemoWriteScreen> {
     super.dispose(); // 프레임워크 정리(필수)
   }
 
+  // ═══ 2. 저장 ═════════════════════════════════
+  // 작동: 제목이 비면 무시. 새 메모면 목록에 추가, 수정이면 해당 위치 교체 후 저장+닫기.
   // 저장 버튼 동작. 새 메모면 목록에 추가, 수정이면 그 위치를 교체하려고 둠.
   Future<void> _saveMemo() async {
     // 제목이 비면 저장할 의미가 없어 무시.
@@ -74,6 +78,8 @@ class _MemoWriteScreenState extends State<MemoWriteScreen> {
     Navigator.pop(context);
   }
 
+  // ═══ 3. build ════════════════════════════════
+  // 작동: 앱바 제목은 모드에 따라 바뀌고 체크 버튼으로 저장. 본문은 제목칸 + 내용칸.
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -92,7 +98,6 @@ class _MemoWriteScreenState extends State<MemoWriteScreen> {
           children: [
             TextField(
               controller: _titleController,
-              // hintText = 회색 안내문. 비었을 때만 보이고, 입력하면 사라짐(실제 값은 빈칸).
               decoration: const InputDecoration(hintText: '적고 싶은 제목을 적으시오'),
               style: TextStyle(color: theme.textTheme.bodyLarge?.color),
             ),
@@ -101,7 +106,7 @@ class _MemoWriteScreenState extends State<MemoWriteScreen> {
               child: TextField(
                 controller: _contentController,
                 decoration: const InputDecoration(
-                  hintText: '이곳은 내용을 적는 곳이오', // 회색 안내문(입력하면 사라짐)
+                  hintText: '이곳은 내용을 적는 곳이오',
                   border: InputBorder.none,
                 ),
                 // 내용은 길 수 있어 줄 제한 없이 남은 공간을 다 쓰게 함.
